@@ -1,0 +1,12 @@
+[package]
+name = "cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "publish-crates"
+path = "src/main.rs"
+
+[dependencies]
+publish-crates = { path = "../" }
+clap = { version = "3", features = ["derive"] }

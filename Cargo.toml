@@ -1,0 +1,27 @@
+[package]
+name = "publish-crates"
+version = "0.1.0"
+edition = "2021"
+publish = true
+
+[workspace]
+members = [
+  "action",
+  "cli",
+]
+
+[profile.dev]
+opt-level = 0
+debug = 1
+
+[profile.release]
+lto = true
+
+[dependencies]
+cargo_metadata = "0"
+anyhow = "1"
+regex = "1"
+lazy_static = "1"
+
+[dev-dependencies]
+pretty_assertions = "1"
