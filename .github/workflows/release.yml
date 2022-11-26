@@ -67,6 +67,12 @@ jobs:
           # windows
           - os: windows-latest
             arch: x86_64-pc-windows-gnu
+          - os: windows-latest
+            arch: x86_64-pc-windows-msvc
+          - os: windows-latest
+            arch: i686-pc-windows-msvc
+          - os: windows-latest
+            arch: aarch64-pc-windows-msvc
           # # apple  
           # - os: ubuntu-latest
           #   arch: x86_64-apple-darwin
