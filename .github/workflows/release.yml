@@ -62,6 +62,16 @@ jobs:
           override: true
           target: ${{ matrix.target.arch }}
 
+      - name: Install build dependencies
+        run: apt-get install -y musl-gcc
+
+      - name: Build target
+        uses: actions-rs/cargo@v1
+        with:
+          use-cross: true
+          command: build
+          args: --release --package action --target ${{ matrix.target }}
+
       - name: Compile binaries
         run: >-
           cargo build
@@ -78,8 +88,8 @@ jobs:
         run: >-
           tar
           czvf
-          ./publish/publish-crates-action-${{ matrix.target }}.tar.gz
-          ./target/${{ matrix.target }}/release/publish-crates-action
+          ./publish/publish-crates-action-${{ matrix.target.arch }}.tar.gz
+          ./target/${{ matrix.target.arch }}/release/publish-crates-action
 
       - name: List package dir
         shell: bash
