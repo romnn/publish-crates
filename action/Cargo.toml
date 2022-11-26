@@ -5,7 +5,7 @@ edition = "2021"
 publish = false
 
 [[bin]]
-name = "publish-crates"
+name = "publish-crates-action"
 path = "src/main.rs"
 
 [dependencies]

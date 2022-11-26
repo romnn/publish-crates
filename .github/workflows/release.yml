@@ -1,0 +1,73 @@
+name: release
+
+on: [push, pull_request]
+# on:
+#   push:
+#     tags:
+#       - "*"
+
+jobs:
+  release-binaries:
+    runs-on: ubuntu-latest
+    strategy: 
+      fail-fast: false
+      matrix:
+        - aarch64-unknown-linux-gnu
+        - armv7-unknown-linux-gnueabihf
+        - i686-unknown-linux-gnu
+        - i686-unknown-linux-musl
+        - mips-unknown-linux-gnu
+        - mips64-unknown-linux-gnuabi64
+        - mips64el-unknown-linux-gnuabi64
+        - mipsel-unknown-linux-gnu
+        - powerpc-unknown-linux-gnu
+        - powerpc64-unknown-linux-gnu
+        - powerpc64le-unknown-linux-gnu
+        - arm-unknown-linux-gnueabi
+        - x86_64-unknown-linux-gnu
+        - x86_64-unknown-linux-musl
+
+    steps:
+      - uses: actions/checkout@v2
+      - id: query
+        uses: romnn/query-git-action@master
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+          target: ${{ matrix.target }}
+
+      - name: Compile binaries
+        run: >-
+          cargo build
+          --release
+          --package action
+          --target ${{ matrix.target }}
+
+      - name: Create package dir
+        shell: bash
+        run: mkdir publish/
+
+      - name: Package
+        shell: bash
+        run: >-
+          tar
+          czvf
+          ./publish/publish-crates-action-${{ matrix.target }}.tar.gz
+          ./target/${{ matrix.target }}/release/publish-crates-action
+
+      - name: List package dir
+        shell: bash
+        run: ls -lia ./publish
+
+      - name: Upload release binaries
+        if: false
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: publish/*
+          tag: ${{ steps.query.outputs.stable_semver_version }}
+          release_name: ${{ steps.query.outputs.stable_semver_version }}
+          overwrite: true
+          file_glob: true

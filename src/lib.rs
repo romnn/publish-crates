@@ -1,116 +1,195 @@
-#![allow(warnings)]
+// #![allow(warnings)]
 
 use actions_toolkit::core as actions;
 use anyhow::Result;
-use cargo_metadata::{Dependency, DependencyKind};
-// use futures::lock::{Mutex, RwLock};
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use cargo_metadata::DependencyKind;
+use futures::stream::{self, FuturesUnordered, StreamExt};
+use futures::Future;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::pin::Pin;
-// use std::sync::RwLock;
-use tokio::sync::{Mutex, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use tokio::time::{interval, sleep, Duration, Instant};
 
+/// Options for publishing packages.
 #[derive(Debug)]
 pub struct Options {
+    /// Path to the package or workspace to be considered
     pub path: PathBuf,
+    /// GitHub token
     pub token: String,
+    /// Cargo registry token
     pub registry_token: Option<String>,
+    /// Perform dry-run
+    /// This will perform all checks without publishing the package
     pub dry_run: bool,
+    /// todo
     pub check_repo: bool,
+    /// Delay before attempting to publish dependent crate
     pub publish_delay: Option<u16>,
+    /// todo
     pub no_verify: bool,
+    /// Resolve missing versions for local packages.
+    ///
+    /// Versions of local packages that use `{ path = "../some/path" }`
+    /// will be resolved to the version of the package the `path` is pointing to.
+    /// Note that even if `version` is present, the resolved value will be used.
+    ///
+    /// **Note**: This will update your `Cargo.toml` manifest with the resolved version.
     pub resolve_versions: bool,
+    /// todo
     pub ignore_unpublished: bool,
+    /// Packages to explicitely include
+    ///
+    /// If using explicit include, specify all package names you wish to publish
     pub include: Option<Vec<String>>,
+    /// Packages to explicitely exclude
+    ///
+    /// Excluded package names have precedence over included package names.
     pub exclude: Option<Vec<String>>,
 }
 
-use std::sync::Arc;
-
-// must be able to share the package async
-#[derive()]
-// struct Package<'a> {
+/// A cargo package.
 struct Package {
-    // package: &'a cargo_metadata::Package,
     package: cargo_metadata::Package,
     path: PathBuf,
     published: Mutex<bool>,
-    // deps: HashMap<PathBuf, Arc<RwLock<Package>>>,
-    // deps: HashMap<PathBuf, Arc<Package>>,
     deps: RwLock<HashMap<String, Arc<Package>>>,
-    // deps: Mutex<HashMap<String, &'a Package<'a>>>,
-    // deps: MuteHashMap<String, Arc<Package>>,
-    // dependants: HashMap<PathBuf, Arc<RwLock<Package>>>,
     dependants: RwLock<HashMap<String, Arc<Package>>>,
-    // dependants: Mutex<HashMap<String, &'a Package<'a>>>,
-    // dependants: HashMap<String, Arc<Package>>,
 }
 
-// impl<'a> std::fmt::Debug for Package<'a> {
 impl std::fmt::Debug for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        writeln!(f, "{}", self)
+        write!(f, "{}", self)
     }
 }
 
-// impl<'a> std::fmt::Display for Package<'a> {
 impl std::fmt::Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Package")
             .field("name", &self.package.name)
             .field("version", &self.package.version.to_string())
-            // .field(
-            //     "deps",
-            //     // &self.deps().keys().collect::<Vec<_>>(),
-            //     &self.deps.read().unwrap().keys().collect::<Vec<_>>(),
-            // )
-            // .field(
-            //     "dependants",
-            //     &self.dependants.read().unwrap().keys().collect::<Vec<_>>(),
-            // )
+            .field(
+                "deps",
+                &self.deps.read().unwrap().keys().collect::<Vec<_>>(),
+            )
+            .field(
+                "dependants",
+                &self.dependants.read().unwrap().keys().collect::<Vec<_>>(),
+            )
             .finish()
     }
 }
 
-// impl<'a> Package<'a> {
+// #[derive(thiserror::Error, Debug)]
+// enum WaitForPackageError {
+//     #[error("timeout waiting for create to be published")]
+//     Timeout,
+// }
+
 impl Package {
-    // pub fn deps(&self) -> Vec<HashMap< Arc<Package>> {
-    //     self.deps.read().unwrap().values().cloned().collect()
-    // }
-
-    // pub fn dependants(&self) -> Vec<Arc<Package>> {
-    //     self.dependants.read().unwrap().values().cloned().collect()
-    // }
-
-    pub async fn published(&self) -> bool {
-        *self.published.lock().await
+    /// Returns `true` if the package has been successfully published.
+    pub fn published(&self) -> bool {
+        *self.published.lock().unwrap()
     }
 
-    // pub async fn ready(self: &Arc<Self>) -> bool {
-    pub async fn ready(&self) -> bool {
-        // check if all dependants are published
-        stream::iter(self.deps.read().await.values()) // unwrap().values())
-            .all(|d| async move { *d.published.lock().await })
-            .await
+    /// Checks if the package is ready for publishing.
+    ///
+    /// A package can be published if all its dependencies have been published.
+    pub fn ready(&self) -> bool {
+        self.deps.read().unwrap().values().all(|d| d.published())
     }
 
-    // pub async fn publish(&self, options: &Options) -> Result<&Package<'a>> {
-    // pub async fn publish<'a, 'o>(
-    pub async fn publish(
-        // self: &'a Arc<Self>,
-        self: Arc<Self>,
-        options: Arc<Options>,
-        // options: &'o Options,
-    ) -> Result<Arc<Self>> {
-        use std::process::Command;
+    /// Wait until the published package is available on the registry.
+    pub async fn is_available(&self) -> Result<bool> {
+        use crates_io_api::{AsyncClient, Error as RegistryError};
+        use semver::Version;
+
+        let api = AsyncClient::new(
+            "publish_crates (https://github.com/romnn/publish-crates)",
+            std::time::Duration::from_millis(1000),
+        )?;
+
+        let info = match api.get_crate(&self.package.name).await {
+            Ok(info) => info,
+            Err(RegistryError::NotFound(_)) => return Ok(false),
+            Err(err) => return Err(err.into()),
+        };
+
+        let mut versions = info
+            .versions
+            .iter()
+            .filter_map(|v| match Version::parse(&v.num) {
+                Ok(version) => Some((version, v)),
+                Err(_) => None,
+            });
+        let version = match versions.find(|(ver, _)| ver == &self.package.version) {
+            Some((_, version)) => version,
+            None => return Ok(false),
+        };
+
+        let client = reqwest::Client::new();
+        let dl_response = client
+            .head(format!("https://crates.io{}", version.dl_path))
+            .send()
+            .await?;
+        Ok(dl_response.status() == reqwest::StatusCode::OK)
+    }
+
+    /// Wait until the published package is available on the registry.
+    pub async fn wait_package_available(&self, timeout: impl Into<Option<Duration>>) -> Result<()> {
+        let timeout = timeout
+            .into()
+            .unwrap_or_else(|| Duration::from_secs(2 * 60));
+        let start = Instant::now();
+        let mut ticker = interval(Duration::from_secs(5));
+        loop {
+            ticker.tick().await;
+            println!("tick");
+            if self.is_available().await? {
+                return Ok(());
+            }
+            // check for timeout
+            if Instant::now().duration_since(start) > timeout {
+                anyhow::bail!(
+                    "exceeded timeout of {:?} waiting for crate {} {} to be published",
+                    timeout,
+                    self.package.name,
+                    self.package.version.to_string()
+                );
+            }
+        }
+        unreachable!();
+    }
+
+    /// Publishes this package
+    pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> Result<Arc<Self>> {
+        use async_process::Command;
 
         println!("publishing {}", self.path.display());
-        *self.published.lock().await = true;
+
+        // wait for package to be available on the registry
+        self.wait_package_available(None).await?;
+
+        if let Some(delay) = options.publish_delay {
+            sleep(Duration::from_secs(delay as u64)).await;
+        }
+        let mut cmd = Command::new("cargo");
+        cmd.arg("update");
+        cmd.current_dir(&self.path);
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            anyhow::bail!("command {:?} failed", cmd);
+        }
+
+        *self.published.lock().unwrap() = true;
+        println!("published {}", self.package.name);
         return Ok(self);
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
         // cmd.args(options.args);
+
         if options.no_verify {
             cmd.arg("--no-verify");
         }
@@ -120,31 +199,34 @@ impl Package {
         }
         if options.dry_run {
             cmd.arg("--dry-run");
-            // println!("dry-run: skipping executing {:?}", &cmd);
-            // continue;
         }
         if options.resolve_versions {
             cmd.arg("--allow-dirty");
         }
         println!("publishing {}", self.package.name);
-        let output = cmd.output()?;
-        println!("stdout {}", String::from_utf8_lossy(&output.stdout));
-        println!("stdout {}", String::from_utf8_lossy(&output.stderr));
+        let output = cmd.output().await?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        println!("stdout {}", stdout);
+        println!("stdout {}", stderr);
+
+        if !output.status.success() {
+            anyhow::bail!("command {:?} failed: {}", cmd, stderr);
+        }
+
         if options.dry_run {
             println!(
                 "dry-run: skipping waiting for {} {} to be published",
                 &self.package.name, self.package.version
             );
-            *self.published.lock().await = true;
+            *self.published.lock().unwrap() = true;
             return Ok(self);
         }
         // wait for the package to become available here
-        *self.published.lock().await = true;
+        *self.published.lock().unwrap() = true;
         Ok(self)
     }
 }
-
-use futures::stream::{self, FuturesUnordered, StreamExt};
 
 pub async fn test(options: Arc<Options>) -> Result<()> {
     println!("searching cargo packages at {}", options.path.display());
@@ -153,7 +235,6 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(&options.path)
         .exec()?;
-    // dbg!(&metadata);
 
     let packages = metadata.workspace_packages();
     let packages: Arc<HashMap<PathBuf, Arc<Package>>> = Arc::new(
@@ -195,9 +276,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                             path,
                             published: Mutex::new(false),
                             deps: RwLock::new(HashMap::new()),
-                            // deps: HashMap::new(),
                             dependants: RwLock::new(HashMap::new()),
-                            // dependants: HashMap::new(),
                         }),
                     ))
                 }
@@ -206,26 +285,17 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
             .await,
     );
 
-    // todo: should we just make the full package an rwlock?
-    // should we just make all the packages arcs? and clone them once?
-
-    // let mut dependencies
-    // let mut dependants
-
-    // for p in packages.values() {
     let results: Vec<_> = stream::iter(packages.values())
         .map(|p| {
             let packages = packages.clone();
             let options = options.clone();
             async move {
                 use toml_edit::{value, Document};
-                let mut manifest =
-                    std::fs::read_to_string(&p.package.manifest_path)?.parse::<Document>()?;
+                let manifest = tokio::fs::read_to_string(&p.package.manifest_path).await?;
+                let mut manifest = manifest.parse::<Document>()?;
                 let mut need_update = false;
-                let mut dependencies: Vec<PathBuf> = Vec::new();
 
                 for dep in &p.package.dependencies {
-                    dbg!(&dep.path);
                     let mut dep_version = dep.req.clone();
                     if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
                         // also if the version is set, we want to resolve automatically?
@@ -261,23 +331,20 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                                     manifest[kind][&dep.name]
                                         .as_inline_table_mut()
                                         .map(|t| t.fmt());
+                                    need_update = true;
                                 }
                             }
                         }
 
-                        dependencies.push(path); // resolved.package.name.clone());
-
                         p.deps
                             .write()
-                            .await
-                            // .unwrap()
+                            .unwrap()
                             .insert(resolved.package.name.clone(), resolved.clone());
 
                         resolved
                             .dependants
                             .write()
-                            .await
-                            // .unwrap()
+                            .unwrap()
                             .insert(p.package.name.clone(), p.clone());
                     }
 
@@ -292,53 +359,31 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
 
                 // write updated cargo manifest
                 if need_update {
-                    println!("{}", &manifest.to_string());
+                    // println!("{}", &manifest.to_string());
+                    println!("updating {}", &p.package.manifest_path);
+                    if false {
+                        use tokio::io::AsyncWriteExt;
+                        let mut f = tokio::fs::OpenOptions::new()
+                            .write(true)
+                            .truncate(true)
+                            .open(&p.package.manifest_path)
+                            .await?;
+                        f.write_all(manifest.to_string().as_bytes()).await?;
+                    }
                 }
 
-                // Ok((p.package.name.clone(), dependencies))
-                // Ok((p.package.name.clone(), dependencies))
-                // Ok((p.path.clone(), dependencies))
                 Ok(())
-                // p.package.manifest_path
             }
         })
         .buffer_unordered(8)
         .collect()
         .await;
 
-    // for result in results.into_iter() {
-    //     match result {
-    //         Ok((pkg_path, deps)) => {
-    //             let pkg = packages.get_mut(&pkg_path).unwrap();
-    //             for dep_path in deps {
-    //                 let dep = packages.get(&dep_path).unwrap();
-    //                 pkg.deps
-    //                     // .write()
-    //                     // .await
-    //                     // .unwrap()
-    //                     .insert(dep_path, dep.clone());
-
-    //                 dep.dependants
-    //                     // .write()
-    //                     // .await
-    //                     // .unwrap()
-    //                     .insert(pkg_path, pkg.clone());
-    //             }
-    //         }
-    //         Err(err) => return Err(err),
-    //     }
-    // }
+    // fail on error
     results.into_iter().collect::<Result<Vec<_>>>()?;
 
-    // update dependency graphs
     println!("{:#?}", &packages);
-    dbg!(&packages.len());
 
-    // we access dependants (read) -> its dependencies (read)
-    // if a dependency is running, it is write locked and we deadlock
-    // -> package needs interior mutability
-
-    // let package_names: Vec<PathBuf> = packages.keys().collect();
     println!(
         "found packages: {:?}",
         packages
@@ -346,7 +391,6 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
             .map(|p| p.package.name.clone())
             .collect::<Vec<_>>()
     );
-    // println!("found packages: {:?}", packages.keys().collect::<Vec<_>>());
 
     // // checking is not really necessary?
     // // because we run --dry-run with cargo
@@ -357,100 +401,45 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
         // fast path: nothing to do here
         return Ok(());
     }
-    // let mut ready = publish_packages
-    //     .iter()
-    //     .filter(|(_, p)| p.deps.lock().unwrap().is_empty())
-    //     .collect::<HashMap<_, _>>();
+    let mut ready: Vec<Arc<Package>> = packages.values().filter(|p| p.ready()).cloned().collect();
 
-    let mut ready: Vec<Arc<Package>> = Vec::new();
-    for p in packages.values() {
-        if p.ready().await {
-            ready.push(p.clone());
-        }
-    }
-    // let mut ready: Vec<Arc<Package>> = stream::iter(packages.values().cloned())
-    //     // .filter(|p| p.deps.lock().unwrap().is_empty())
-    //     // .filter(|p: Arc<Package>| async move { p.ready().await })
-    //     .filter(|p| async move {
-    //         // None
-    //         // p.ready().await
-    //         if stream::iter(p.deps.read().await.values())
-    //             .all(|d| async move { *d.published.lock().await })
-    //             .await
-    //         {
-    //             true
-    //             // Some(p)
-    //         } else {
-    //             false
-    //             // None
-    //         }
-    //     })
-    //     // .buffer_unordered(8)
-    //     .collect::<Vec<_>>()
-    //     .await;
-
-    if ready.is_empty() {
-        anyhow::bail!("cycles? cannot start");
-    }
-
-    use futures::stream::{FuturesUnordered, StreamExt};
-    use futures::Future;
-
-    // // let mut tasks: FuturesUnordered<Pin<Box<dyn Future<Output = Result<&'_ Package<'a>>>>>> =
-    // // type TaskFut<'a> = dyn Future<Output = Result<&'a Arc<Package>>>;
     type TaskFut = dyn Future<Output = Result<Arc<Package>>>;
     let mut tasks: FuturesUnordered<Pin<Box<TaskFut>>> = FuturesUnordered::new();
 
     loop {
-        // push ready tasks
+        // check if we are done
+        if tasks.is_empty() && ready.is_empty() {
+            break;
+        }
+
+        // start running ready tasks
         for p in ready.drain(0..) {
             let options_clone = options.clone();
-            tasks.push(
-                // p.publish(&options))
-                Box::pin(async move { p.clone().publish(options_clone).await }),
-            );
+            tasks.push(Box::pin(async move { p.publish(options_clone).await }));
         }
-        assert!(ready.is_empty());
 
-        // wait for task to complete
-        // let test = tasks.next().await;
+        // wait for a task to complete
         match tasks.next().await {
             Some(Err(err)) => {
                 anyhow::bail!("a task failed: {}", err)
             }
             Some(Ok(completed)) => {
                 // update ready tasks
-                for d in completed.dependants.read().await.values() {
-                    if d.ready().await {
-                        ready.push(d.clone());
-                    }
-                }
-                // ready.extend(
-                //     stream::iter(completed.dependants.read().await.values().cloned())
-                //         .filter(|d| d.ready())
-                //         .collect::<Vec<Arc<Package>>>()
-                //         .await,
-                // );
-                // .for_each(|d| async move { ready.push(d) });
-                // .await;
-                // }
-                // for d in completed.dependants.read().unwrap().values() {
-                //     if d.ready().await {
-                //         ready.push(d);
-                //     }
-                // }
+                ready.extend(
+                    completed
+                        .dependants
+                        .read()
+                        .unwrap()
+                        .values()
+                        .filter(|d| d.ready() && !d.published())
+                        .cloned(),
+                );
             }
             None => {}
         }
-
-        // check if we are done
-        if tasks.is_empty() && ready.is_empty() {
-            break;
-        }
     }
 
-    if !stream::iter(packages.values()).all(|p| p.published()).await {
-        // async move *p.published.lock().unwrap()) {
+    if !packages.values().all(|p| p.published()) {
         anyhow::bail!("not all published");
     }
 
