@@ -41,8 +41,8 @@ jobs:
           # - os: ubuntu-latest
           #   arch: mips64el-unknown-linux-gnuabi64
           # linux mips
-          - os: ubuntu-latest
-            arch: mipsel-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   arch: mipsel-unknown-linux-gnu
           # - os: ubuntu-latest
           #   arch: powerpc-unknown-linux-gnu
           # - os: ubuntu-latest
@@ -60,19 +60,27 @@ jobs:
           - os: ubuntu-latest
             arch: x86_64-unknown-linux-musl
           # apple  
-          - os: ubuntu-latest
+          - os: macos-latest
             arch: x86_64-apple-darwin
-          - os: ubuntu-latest
+          - os: macos-latest
             arch: aarch64-apple-darwin
           # windows
-          - os: ubuntu-latest
-            arch: i686-pc-windows-msvc
-          - os: ubuntu-latest
-            arch: aarch64-pc-windows-msvc
-          - os: ubuntu-latest
+          - os: windows-latest
             arch: x86_64-pc-windows-gnu
-          - os: ubuntu-latest
-            arch: x86_64-pc-windows-msvc
+          # # apple  
+          # - os: ubuntu-latest
+          #   arch: x86_64-apple-darwin
+          # - os: ubuntu-latest
+          #   arch: aarch64-apple-darwin
+          # # windows
+          # - os: ubuntu-latest
+          #   arch: i686-pc-windows-msvc
+          # - os: ubuntu-latest
+          #   arch: aarch64-pc-windows-msvc
+          # - os: ubuntu-latest
+          #   arch: x86_64-pc-windows-gnu
+          # - os: ubuntu-latest
+          #   arch: x86_64-pc-windows-msvc
 
 
     steps:
@@ -92,7 +100,7 @@ jobs:
       - name: Build target
         uses: actions-rs/cargo@v1
         with:
-          use-cross: true
+          use-cross: ${{ contains(matrix.target.os, 'ubuntu') }}
           command: build
           args: >-
             --release
