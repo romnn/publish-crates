@@ -20,36 +20,60 @@ jobs:
       fail-fast: false
       matrix:
         target:
+          # linux aarch64 
           - os: ubuntu-latest
             arch: aarch64-unknown-linux-gnu
           - os: ubuntu-latest
-            arch: aarch64-unknown-linux-gnu
+            arch: aarch64-unknown-linux-musl
+          # linux armv7
           - os: ubuntu-latest
-            arch: armv7-unknown-linux-gnueabihf
+            arch: armv7-unknown-linux-musleabihf
+            # arch: armv7-unknown-linux-gnueabihf
+          # linux i686
           - os: ubuntu-latest
             arch: i686-unknown-linux-gnu
           - os: ubuntu-latest
             arch: i686-unknown-linux-musl
-          - os: ubuntu-latest
-            arch: mips-unknown-linux-gnu
-          - os: ubuntu-latest
-            arch: mips64-unknown-linux-gnuabi64
-          - os: ubuntu-latest
-            arch: mips64el-unknown-linux-gnuabi64
+          # - os: ubuntu-latest
+          #   arch: mips-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   arch: mips64-unknown-linux-gnuabi64
+          # - os: ubuntu-latest
+          #   arch: mips64el-unknown-linux-gnuabi64
+          # linux mips
           - os: ubuntu-latest
             arch: mipsel-unknown-linux-gnu
-          - os: ubuntu-latest
-            arch: powerpc-unknown-linux-gnu
-          - os: ubuntu-latest
-            arch: powerpc64-unknown-linux-gnu
-          - os: ubuntu-latest
-            arch: powerpc64le-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   arch: powerpc-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   arch: powerpc64-unknown-linux-gnu
+          # - os: ubuntu-latest
+          #   arch: powerpc64le-unknown-linux-gnu
+          # linux arm
           - os: ubuntu-latest
             arch: arm-unknown-linux-gnueabi
+          - os: ubuntu-latest
+            arch: arm-unknown-linux-gnueabihf
+          # linux x86
           - os: ubuntu-latest
             arch: x86_64-unknown-linux-gnu
           - os: ubuntu-latest
             arch: x86_64-unknown-linux-musl
+          # apple  
+          - os: ubuntu-latest
+            arch: x86_64-apple-darwin
+          - os: ubuntu-latest
+            arch: aarch64-apple-darwin
+          # windows
+          - os: ubuntu-latest
+            arch: i686-pc-windows-msvc
+          - os: ubuntu-latest
+            arch: aarch64-pc-windows-msvc
+          - os: ubuntu-latest
+            arch: x86_64-pc-windows-gnu
+          - os: ubuntu-latest
+            arch: x86_64-pc-windows-msvc
+
 
     steps:
       - uses: actions/checkout@v3
