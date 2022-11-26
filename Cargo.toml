@@ -18,10 +18,14 @@ debug = 1
 lto = true
 
 [dependencies]
+semver = "1"
 cargo_metadata = "0"
 anyhow = "1"
 regex = "1"
 lazy_static = "1"
+actions-toolkit = "0"
+toml_edit = "0"
+futures = "0.3"
 
 [dev-dependencies]
 pretty_assertions = "1"
