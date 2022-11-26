@@ -2,6 +2,7 @@ use anyhow::Result;
 use clap::Parser;
 use publish_crates as publish;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 #[derive(Parser, Debug, Clone)]
 #[clap(
@@ -69,18 +70,6 @@ impl Into<publish::Options> for Options {
 #[tokio::main]
 async fn main() -> Result<()> {
     let options: publish::Options = Options::parse().into();
-    dbg!(&options);
-
-    // let options = publish::Options {
-    //     // path,
-    //     ..options.into() // token: String,
-    //                      // registry_token: Option<String>,
-    //                      // dry_run: bool,
-    //                      // check_repo: bool,
-    //                      // publish_delay: Option<u16>,
-    //                      // no_verify: bool,
-    //                      // ignore_unpublished: bool,
-    // };
-    publish::test(&options).await?;
+    publish::test(Arc::new(options)).await?;
     Ok(())
 }
