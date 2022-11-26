@@ -70,14 +70,17 @@ jobs:
         with:
           use-cross: true
           command: build
-          args: --release --package action --target ${{ matrix.target.arch }}
+          args: >-
+            --release
+            --package action
+            --target ${{ matrix.target.arch }}
 
-      - name: Compile binaries
-        run: >-
-          cargo build
-          --release
-          --package action
-          --target ${{ matrix.target.arch }}
+      # - name: Compile binaries
+      #   run: >-
+      #     cargo build
+      #     --release
+      #     --package action
+      #     --target ${{ matrix.target.arch }}
 
       - name: Create package dir
         shell: bash
