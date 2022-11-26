@@ -6,30 +6,39 @@ on: [push, pull_request]
 #     tags:
 #       - "*"
 
+# i686-pc-windows-gnu,
+# i686-pc-windows-msvc,
+# x86_64-pc-windows-gnu,
+# x86_64-pc-windows-msvc,
+# windows-latest
+
 jobs:
   release-binaries:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.target.os }}
+    name: build release (${{ matrix.target.arch }})
     strategy: 
       fail-fast: false
       matrix:
         target:
-          - aarch64-unknown-linux-gnu
-          - armv7-unknown-linux-gnueabihf
-          - i686-unknown-linux-gnu
-          - i686-unknown-linux-musl
-          - mips-unknown-linux-gnu
-          - mips64-unknown-linux-gnuabi64
-          - mips64el-unknown-linux-gnuabi64
-          - mipsel-unknown-linux-gnu
-          - powerpc-unknown-linux-gnu
-          - powerpc64-unknown-linux-gnu
-          - powerpc64le-unknown-linux-gnu
-          - arm-unknown-linux-gnueabi
-          - x86_64-unknown-linux-gnu
-          - x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            arch: 
+              - aarch64-unknown-linux-gnu
+              - armv7-unknown-linux-gnueabihf
+              - i686-unknown-linux-gnu
+              - i686-unknown-linux-musl
+              - mips-unknown-linux-gnu
+              - mips64-unknown-linux-gnuabi64
+              - mips64el-unknown-linux-gnuabi64
+              - mipsel-unknown-linux-gnu
+              - powerpc-unknown-linux-gnu
+              - powerpc64-unknown-linux-gnu
+              - powerpc64le-unknown-linux-gnu
+              - arm-unknown-linux-gnueabi
+              - x86_64-unknown-linux-gnu
+              - x86_64-unknown-linux-musl
 
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - id: query
         uses: romnn/query-git-action@master
       - uses: actions-rs/toolchain@v1
@@ -37,14 +46,14 @@ jobs:
           toolchain: stable
           profile: minimal
           override: true
-          target: ${{ matrix.target }}
+          target: ${{ matrix.target.arch }}
 
       - name: Compile binaries
         run: >-
           cargo build
           --release
           --package action
-          --target ${{ matrix.target }}
+          --target ${{ matrix.target.arch }}
 
       - name: Create package dir
         shell: bash

@@ -21,16 +21,14 @@ lto = true
 semver = "1"
 cargo_metadata = "0"
 anyhow = "1"
-# regex = "1"
-# lazy_static = "1"
 actions-toolkit = "0"
 toml_edit = "0"
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 async-process = "1"
 thiserror = "1"
-crates_io_api = "0"
-reqwest = "0"
+crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
+reqwest = { version = "0", features = ["rustls-tls"] }
 
 [dev-dependencies]
 pretty_assertions = "1"

@@ -159,7 +159,6 @@ impl Package {
                 );
             }
         }
-        unreachable!();
     }
 
     /// Publishes this package
