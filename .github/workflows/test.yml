@@ -13,9 +13,7 @@ jobs:
           override: true
 
       - name: Publish crates
-        uses: ./
-        env:
-          GITHUB_ACTION_REPOSITORY: "romnn/publish-crates"
+        uses: romnn/publish-crates@main
         with:
           version: latest
           no-verify: true
