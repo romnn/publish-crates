@@ -1,8 +1,16 @@
-use anyhow::Result;
+// #![allow(warnings)]
 use clap::Parser;
+use color_eyre::eyre::{self, eyre};
 use publish_crates as publish;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
+
+fn parse_duration_string(duration: &str) -> eyre::Result<Duration> {
+    duration_string::DurationString::from_string(duration.into())
+        .map(Into::into)
+        .map_err(|_| eyre!("{} is not a valid duration", duration))
+}
 
 #[derive(Parser, Debug, Clone)]
 #[clap(
@@ -20,16 +28,16 @@ struct Options {
     registry_token: Option<String>,
     #[clap(long = "dry-run")]
     dry_run: bool,
-    #[clap(long = "check-repo")]
-    check_repo: bool,
-    #[clap(long = "publish-delay")]
-    publish_delay: Option<u16>,
+    // #[clap(long = "check-repo")]
+    // check_repo: bool,
+    #[clap(long = "publish-delay", value_parser = parse_duration_string)]
+    publish_delay: Option<Duration>,
     #[clap(long = "no-verify")]
     no_verify: bool,
     #[clap(long = "resolve-versions")]
     resolve_versions: bool,
-    #[clap(long = "ignore-unpublished")]
-    ignore_unpublished: bool,
+    // #[clap(long = "ignore-unpublished")]
+    // ignore_unpublished: bool,
     #[clap(long = "include")]
     include: Option<Vec<String>>,
     #[clap(long = "exclude")]
@@ -56,11 +64,11 @@ impl Into<publish::Options> for Options {
             token: self.token,
             registry_token: self.registry_token,
             dry_run: self.dry_run,
-            check_repo: self.check_repo,
-            publish_delay: self.publish_delay,
+            // check_repo: self.check_repo,
+            publish_delay: self.publish_delay.into(),
             no_verify: self.no_verify,
             resolve_versions: self.resolve_versions,
-            ignore_unpublished: self.ignore_unpublished,
+            // ignore_unpublished: self.ignore_unpublished,
             include: self.include,
             exclude: self.exclude,
         }
@@ -68,8 +76,10 @@ impl Into<publish::Options> for Options {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> eyre::Result<()> {
+    color_eyre::install()?;
+
     let options: publish::Options = Options::parse().into();
-    publish::test(Arc::new(options)).await?;
+    publish::publish(Arc::new(options)).await.unwrap();
     Ok(())
 }

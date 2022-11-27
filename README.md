@@ -1,5 +1,10 @@
 ## publish crates
 
+#### TODO
+- verify the actions.yml and actions/main.rs line up
+- use only core logging in the lib
+
+#### Done
 // this is the tool we want
 // https://github.com/kjvalencik/actions/blob/master/run/index.ts
 

@@ -1,0 +1,47 @@
+name: publish crates
+description: Publish crates on crates.io
+author: romnn <contact@romnn.com>
+branding:
+  icon: box
+  color: orange
+inputs:
+  token:
+    description: Github API token
+    default: ${{ github.token }}
+  path:
+    description: Path to package or workspace
+    default: .
+  include:
+    description: Packages that should be published
+    default: ["*"]
+  exclude:
+    description: Packages that should not be published
+    default: []
+  extra-args:
+    description: Additional arguments for cargo publish
+    default: ''
+  registry-token:
+    description: Cargo registry token (e.g. crates.io)
+    default: ''
+  dry-run:
+    description: This will perform all checks without publishing the package
+    default: 'false'
+  # check-repo:
+  #   description: 'Check repository consistency'
+  #   default: 'true'
+  publish-delay:
+    description: Delay before attempting to publish dependent crate
+    default: ''
+  no-verify:
+    description: Disable pre-publish validation checks
+    default: 'false'
+  resolve-versions:
+    description: Resolve missing versions for local packages
+    default: 'false'
+
+  # ignore-unpublished-changes:
+  #   description: ''
+  #   default: 'false'
+runs:
+  using: node16
+  main: dist/index.js

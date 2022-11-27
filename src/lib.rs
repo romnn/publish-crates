@@ -1,8 +1,8 @@
 // #![allow(warnings)]
 
-use actions_toolkit::core as actions;
-use anyhow::Result;
+use actions_toolkit::prelude::*;
 use cargo_metadata::DependencyKind;
+use color_eyre::eyre::{self, eyre, WrapErr};
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use futures::Future;
 use std::collections::HashMap;
@@ -14,21 +14,25 @@ use tokio::time::{interval, sleep, Duration, Instant};
 /// Options for publishing packages.
 #[derive(Debug)]
 pub struct Options {
-    /// Path to the package or workspace to be considered
+    /// Path to package or workspace
     pub path: PathBuf,
+
     /// GitHub token
     pub token: String,
+
     /// Cargo registry token
     pub registry_token: Option<String>,
+
     /// Perform dry-run
     /// This will perform all checks without publishing the package
     pub dry_run: bool,
-    /// todo
-    pub check_repo: bool,
+
     /// Delay before attempting to publish dependent crate
-    pub publish_delay: Option<u16>,
-    /// todo
+    pub publish_delay: Option<Duration>,
+
+    /// Disable pre-publish validation checks
     pub no_verify: bool,
+
     /// Resolve missing versions for local packages.
     ///
     /// Versions of local packages that use `{ path = "../some/path" }`
@@ -37,13 +41,13 @@ pub struct Options {
     ///
     /// **Note**: This will update your `Cargo.toml` manifest with the resolved version.
     pub resolve_versions: bool,
-    /// todo
-    pub ignore_unpublished: bool,
-    /// Packages to explicitely include
+
+    /// Packages that should be published
     ///
     /// If using explicit include, specify all package names you wish to publish
     pub include: Option<Vec<String>>,
-    /// Packages to explicitely exclude
+
+    /// Packages that should not be published
     ///
     /// Excluded package names have precedence over included package names.
     pub exclude: Option<Vec<String>>,
@@ -101,7 +105,7 @@ impl Package {
     }
 
     /// Wait until the published package is available on the registry.
-    pub async fn is_available(&self) -> Result<bool> {
+    pub async fn is_available(&self) -> eyre::Result<bool> {
         use crates_io_api::{AsyncClient, Error as RegistryError};
         use semver::Version;
 
@@ -137,7 +141,10 @@ impl Package {
     }
 
     /// Wait until the published package is available on the registry.
-    pub async fn wait_package_available(&self, timeout: impl Into<Option<Duration>>) -> Result<()> {
+    pub async fn wait_package_available(
+        &self,
+        timeout: impl Into<Option<Duration>>,
+    ) -> eyre::Result<()> {
         let timeout = timeout
             .into()
             .unwrap_or_else(|| Duration::from_secs(2 * 60));
@@ -145,13 +152,20 @@ impl Package {
         let mut ticker = interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
-            println!("tick");
+            log_message(
+                LogLevel::Debug,
+                format!(
+                    "checking if crate {} {} is available",
+                    self.package.name,
+                    self.package.version.to_string()
+                ),
+            );
             if self.is_available().await? {
                 return Ok(());
             }
             // check for timeout
             if Instant::now().duration_since(start) > timeout {
-                anyhow::bail!(
+                eyre::bail!(
                     "exceeded timeout of {:?} waiting for crate {} {} to be published",
                     timeout,
                     self.package.name,
@@ -162,27 +176,30 @@ impl Package {
     }
 
     /// Publishes this package
-    pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> Result<Arc<Self>> {
+    pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        println!("publishing {}", self.path.display());
+        log_message(
+            LogLevel::Debug,
+            format!("publishing {}", self.path.display()),
+        );
 
         // wait for package to be available on the registry
         self.wait_package_available(None).await?;
 
         if let Some(delay) = options.publish_delay {
-            sleep(Duration::from_secs(delay as u64)).await;
+            sleep(delay).await;
         }
         let mut cmd = Command::new("cargo");
         cmd.arg("update");
         cmd.current_dir(&self.path);
         let output = cmd.output().await?;
         if !output.status.success() {
-            anyhow::bail!("command {:?} failed", cmd);
+            eyre::bail!("command {:?} failed", cmd);
         }
 
         *self.published.lock().unwrap() = true;
-        println!("published {}", self.package.name);
+        log_message(LogLevel::Debug, format!("published {}", self.package.name));
         return Ok(self);
 
         let mut cmd = Command::new("cargo");
@@ -202,21 +219,23 @@ impl Package {
         if options.resolve_versions {
             cmd.arg("--allow-dirty");
         }
-        println!("publishing {}", self.package.name);
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        println!("stdout {}", stdout);
-        println!("stdout {}", stderr);
+        log_message(LogLevel::Debug, stdout);
+        log_message(LogLevel::Debug, stderr);
 
         if !output.status.success() {
-            anyhow::bail!("command {:?} failed: {}", cmd, stderr);
+            eyre::bail!("command {:?} failed: {}", cmd, stderr);
         }
 
         if options.dry_run {
-            println!(
-                "dry-run: skipping waiting for {} {} to be published",
-                &self.package.name, self.package.version
+            log_message(
+                LogLevel::Debug,
+                format!(
+                    "dry-run: skipping waiting for {} {} to be published",
+                    &self.package.name, self.package.version
+                ),
             );
             *self.published.lock().unwrap() = true;
             return Ok(self);
@@ -227,9 +246,11 @@ impl Package {
     }
 }
 
-pub async fn test(options: Arc<Options>) -> Result<()> {
-    println!("searching cargo packages at {}", options.path.display());
-    // actions::log_message(actions::LogLevel::Debug, "test");
+pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
+    log_message(
+        LogLevel::Debug,
+        format!("searching cargo packages at {}", options.path.display()),
+    );
 
     let metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(&options.path)
@@ -247,7 +268,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                         // which are registry names that are allowed to be published to.
                         if publish.is_empty() {
                             // skip package
-                            println!("exluding: {}", package.name);
+                            log_message(LogLevel::Debug, format!("exluding: {}", package.name));
                             return None;
                         }
                     }
@@ -255,7 +276,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                         if include.len() > 0 {
                             if !include.contains(&package.name) {
                                 // skip package
-                                println!("exluding: {}", package.name);
+                                log_message(LogLevel::Debug, format!("exluding: {}", package.name));
                                 return None;
                             }
                         }
@@ -263,7 +284,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                     if let Some(exclude) = &options.exclude {
                         if exclude.contains(&package.name) {
                             // skip package
-                            println!("exluding: {}", package.name);
+                            log_message(LogLevel::Debug, format!("exluding: {}", package.name));
                             return None;
                         }
                     }
@@ -300,7 +321,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                         // also if the version is set, we want to resolve automatically?
                         // OR we allow chaning and always set allow-dirty
                         // dep_version == semver::VersionReq::STAR &&
-                        let resolved = packages.get(&path).ok_or(anyhow::anyhow!(
+                        let resolved = packages.get(&path).ok_or(eyre::eyre!(
                             "could not resolve local dependency {}",
                             path.display()
                         ))?;
@@ -349,9 +370,9 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
 
                     if dep_version == semver::VersionReq::STAR {
                         if dep.kind != DependencyKind::Development {
-                            anyhow::bail!("dependency {} is missing version field", &dep.name);
+                            eyre::bail!("dependency {} is missing version field", &dep.name);
                         } else if dep.path.is_none() {
-                            anyhow::bail!("dependency {} is missing version field", &dep.name);
+                            eyre::bail!("dependency {} is missing version field", &dep.name);
                         }
                     }
                 }
@@ -359,7 +380,10 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
                 // write updated cargo manifest
                 if need_update {
                     // println!("{}", &manifest.to_string());
-                    println!("updating {}", &p.package.manifest_path);
+                    log_message(
+                        LogLevel::Warning,
+                        format!("updating {}", &p.package.manifest_path),
+                    );
                     if false {
                         use tokio::io::AsyncWriteExt;
                         let mut f = tokio::fs::OpenOptions::new()
@@ -379,22 +403,19 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
         .await;
 
     // fail on error
-    results.into_iter().collect::<Result<Vec<_>>>()?;
+    results.into_iter().collect::<eyre::Result<Vec<_>>>()?;
 
-    println!("{:#?}", &packages);
-
-    println!(
-        "found packages: {:?}",
-        packages
-            .values()
-            .map(|p| p.package.name.clone())
-            .collect::<Vec<_>>()
+    // println!("{:#?}", &packages);
+    log_message(
+        LogLevel::Debug,
+        format!(
+            "found packages: {:?}",
+            packages
+                .values()
+                .map(|p| p.package.name.clone())
+                .collect::<Vec<_>>()
+        ),
     );
-
-    // // checking is not really necessary?
-    // // because we run --dry-run with cargo
-    // //  => does that check for versions already published
-    // //  => build and dep releated issues will be detected due to it packaging...
 
     if packages.is_empty() {
         // fast path: nothing to do here
@@ -402,7 +423,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
     }
     let mut ready: Vec<Arc<Package>> = packages.values().filter(|p| p.ready()).cloned().collect();
 
-    type TaskFut = dyn Future<Output = Result<Arc<Package>>>;
+    type TaskFut = dyn Future<Output = eyre::Result<Arc<Package>>>;
     let mut tasks: FuturesUnordered<Pin<Box<TaskFut>>> = FuturesUnordered::new();
 
     loop {
@@ -420,7 +441,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
         // wait for a task to complete
         match tasks.next().await {
             Some(Err(err)) => {
-                anyhow::bail!("a task failed: {}", err)
+                eyre::bail!("a task failed: {}", err)
             }
             Some(Ok(completed)) => {
                 // update ready tasks
@@ -439,7 +460,7 @@ pub async fn test(options: Arc<Options>) -> Result<()> {
     }
 
     if !packages.values().all(|p| p.published()) {
-        anyhow::bail!("not all published");
+        eyre::bail!("not all published");
     }
 
     Ok(())
