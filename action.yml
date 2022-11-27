@@ -16,10 +16,10 @@ inputs:
     default: .
   include:
     description: Packages that should be published
-    default: ["*"]
+    default: ""
   exclude:
     description: Packages that should not be published
-    default: []
+    default: ""
   extra-args:
     description: Additional arguments for cargo publish
     default: ''
