@@ -15,5 +15,6 @@ jobs:
       - name: Publish crates
         uses: ./
         with:
-          no-verify: "true"
-          dry-run: "true"
+          version: latest
+          no-verify: true
+          dry-run: true

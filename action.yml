@@ -5,6 +5,9 @@ branding:
   icon: box
   color: orange
 inputs:
+  version:
+    description: Version of the tool (defaults to the version of the action)
+    default: ''
   token:
     description: Github API token
     default: ${{ github.token }}

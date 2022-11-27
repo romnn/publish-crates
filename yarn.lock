@@ -277,10 +277,10 @@ abort-controller@^3.0.0:
   dependencies:
     event-target-shim "^5.0.0"
 
-action-get-release@^0.0.1:
-  version "0.0.1"
-  resolved "https://registry.yarnpkg.com/action-get-release/-/action-get-release-0.0.1.tgz#85ff380c00a2db6ed06bb60db47c86b8d89ddf58"
-  integrity sha512-53fLqdYsz4r6LJOfPpEKh5kAoOOS3kYOITdLsyBYyo+H8GzihtCl4qAwqh6H/+/fWutDcZ3Yy64MtsQcQR/fVg==
+action-get-release@^0.0.9:
+  version "0.0.9"
+  resolved "https://registry.yarnpkg.com/action-get-release/-/action-get-release-0.0.9.tgz#d59c9af23d21d72c0a39856cce8157683696fc0e"
+  integrity sha512-LA1RiL11mMRn9VrGfzjttLodrFmY+ijSr75XJMtULqK/l6C7rh+Ym60sLFSN8It8BB1Hx/U8FzuAftldPQHKUQ==
   dependencies:
     "@actions/cache" "^3.0.6"
     "@actions/tool-cache" "^2.0.1"
