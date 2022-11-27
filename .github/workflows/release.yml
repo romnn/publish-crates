@@ -128,9 +128,11 @@ jobs:
         shell: bash
         run: >-
           tar
-          czvf
+          -C 
+          ./target/${{ matrix.target.arch }}/release
+          -czvf
           ./publish/publish-crates-action-${{ matrix.target.arch }}.tar.gz
-          ./target/${{ matrix.target.arch }}/release/publish-crates-action
+          publish-crates-action
 
       - name: List package dir
         shell: bash
