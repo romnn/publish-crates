@@ -12,3 +12,7 @@
   - dependencies
   - dependants
 - write an async loop that does all the work
+
+```bash
+yarn upgrade action-get-release --latest
+```
