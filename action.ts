@@ -14,8 +14,9 @@ async function run(): Promise<void> {
     version = versionOverride;
   } else {
     try {
-      // read the version from cargo manifest
-      let manifest = await parseCargoPackageManifest("Cargo.toml");
+      let manifestPath = "./Cargo.toml";
+      core.debug(`reading version from ${manifestPath}`);
+      let manifest = await parseCargoPackageManifest(manifestPath);
       version = `v${manifest.package.version}`;
     } catch (err: unknown) {
       core.warning(`failed to read version from Cargo.toml: ${err}`);

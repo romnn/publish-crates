@@ -155,7 +155,7 @@ impl Package {
             log_message(
                 LogLevel::Debug,
                 format!(
-                    "checking if crate {} {} is available",
+                    "checking if {} {} is available",
                     self.package.name,
                     self.package.version.to_string()
                 ),
@@ -179,10 +179,7 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        log_message(
-            LogLevel::Debug,
-            format!("publishing {}", self.path.display()),
-        );
+        log_message(LogLevel::Debug, format!("publishing {}", self.package.name));
 
         // wait for package to be available on the registry
         self.wait_package_available(None).await?;
@@ -252,8 +249,13 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         format!("searching cargo packages at {}", options.path.display()),
     );
 
+    let manifest_path = if options.path.is_file() {
+        options.path.clone()
+    } else {
+        options.path.join("Cargo.toml")
+    };
     let metadata = cargo_metadata::MetadataCommand::new()
-        .manifest_path(&options.path)
+        .manifest_path(&manifest_path)
         .exec()?;
 
     let packages = metadata.workspace_packages();
@@ -268,7 +270,10 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         // which are registry names that are allowed to be published to.
                         if publish.is_empty() {
                             // skip package
-                            log_message(LogLevel::Debug, format!("exluding: {}", package.name));
+                            log_message(
+                                LogLevel::Debug,
+                                format!("skipping: {} (publish=false)", package.name),
+                            );
                             return None;
                         }
                     }
@@ -276,7 +281,10 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         if include.len() > 0 {
                             if !include.contains(&package.name) {
                                 // skip package
-                                log_message(LogLevel::Debug, format!("exluding: {}", package.name));
+                                log_message(
+                                    LogLevel::Debug,
+                                    format!("skipping: {} (not included)", package.name),
+                                );
                                 return None;
                             }
                         }
@@ -284,7 +292,10 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                     if let Some(exclude) = &options.exclude {
                         if exclude.contains(&package.name) {
                             // skip package
-                            log_message(LogLevel::Debug, format!("exluding: {}", package.name));
+                            log_message(
+                                LogLevel::Debug,
+                                format!("skipping: {} (excluded)", package.name),
+                            );
                             return None;
                         }
                     }

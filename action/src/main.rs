@@ -6,6 +6,22 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+fn not_empty_res(value: String) -> Result<String, std::env::VarError> {
+    if value.is_empty() {
+        Err(std::env::VarError::NotPresent)
+    } else {
+        Ok(value)
+    }
+}
+
+// fn not_empty(value: String) -> Option<String> {
+//     if value.is_empty() {
+//         None
+//     } else {
+//         Some(value)
+//     }
+// }
+
 fn parse_duration_string(duration: impl Into<String>) -> eyre::Result<Duration> {
     let duration = duration.into();
     duration_string::DurationString::from_string(duration.clone())
@@ -32,16 +48,21 @@ async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
 
     let path: PathBuf = input("path")
+        .and_then(not_empty_res)
         .map(PathBuf::from)
-        .or_else(|_| std::env::current_dir())?;
+        .or_else(|_| std::env::current_dir())
+        .wrap_err("path is not specified")?;
 
     let token = input("token")
+        .and_then(not_empty_res)
         .or_else(|_| std::env::var("GITHUB_TOKEN"))
+        .and_then(not_empty_res)
         .wrap_err("token is not specified")?;
 
-    let registry_token = input("registry-token").ok();
+    let registry_token = input("registry-token").and_then(not_empty_res).ok();
 
     let dry_run = input("dry-run")
+        .and_then(not_empty_res)
         .ok()
         .map(parse_bool_string)
         .map_or(Ok(None), |v| v.map(Some))
@@ -49,12 +70,14 @@ async fn run() -> eyre::Result<()> {
         .unwrap_or(false);
 
     let publish_delay = input("publish-delay")
+        .and_then(not_empty_res)
         .ok()
         .map(parse_duration_string)
         .map_or(Ok(None), |v| v.map(Some))
         .wrap_err("invalid value for publish-delay")?;
 
     let no_verify = input("no-verify")
+        .and_then(not_empty_res)
         .ok()
         .map(parse_bool_string)
         .map_or(Ok(None), |v| v.map(Some))
@@ -62,6 +85,7 @@ async fn run() -> eyre::Result<()> {
         .unwrap_or(false);
 
     let resolve_versions = input("resolve-versions")
+        .and_then(not_empty_res)
         .ok()
         .map(parse_bool_string)
         .map_or(Ok(None), |v| v.map(Some))
@@ -70,11 +94,11 @@ async fn run() -> eyre::Result<()> {
 
     log_message(
         LogLevel::Warning,
-        format!("include: {:#?}", input("include")),
+        format!("include: {:?}", input("include")),
     );
     log_message(
         LogLevel::Warning,
-        format!("exclude: {:#?}", input("include")),
+        format!("exclude: {:?}", input("include")),
     );
     let options = Options {
         path,
