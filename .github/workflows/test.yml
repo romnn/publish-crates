@@ -14,6 +14,8 @@ jobs:
 
       - name: Publish crates
         uses: ./
+        env:
+          GITHUB_ACTION_REPOSITORY: "romnn/publish-crates"
         with:
           version: latest
           no-verify: true
