@@ -16,6 +16,7 @@ jobs:
       - name: Simulate Publish crates
         env:
           # todo: need action repository
+          INPUT_TOKEN: ${{ github.token }}
           INPUT_VERSION: latest
           INPUT_NO-VERIFY: true
           INPUT_DRY-RUN: true
