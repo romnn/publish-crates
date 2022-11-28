@@ -1,17 +1,16 @@
-import core from "@actions/core";
-import exec from "@actions/exec";
+import * as core from "@actions/core";
+import * as exec from "@actions/exec";
 import {
-  parseCargoPackageManifestSync,
+  parseCargoPackageManifestAsync,
   Repo,
   RustTarget,
 } from "action-get-release";
-import path from "path";
+import * as path from "path";
 
-const manifest =
-    parseCargoPackageManifestSync(path.join(__dirname, "../Cargo.toml"));
-
-function getVersion(): string {
+async function getVersion(): Promise<string> {
   let version = "latest";
+  const manifest = await parseCargoPackageManifestAsync(
+      path.join(__dirname, "../Cargo.toml"));
   let manifestVersion = manifest.package.version;
   if (manifestVersion && manifestVersion !== "") {
     version = `v${manifestVersion}`;
@@ -25,7 +24,7 @@ function getVersion(): string {
 
 async function run(): Promise<void> {
   const repo = new Repo();
-  const version = getVersion();
+  const version = await getVersion();
   core.debug(`version=${version}`);
 
   let release;
