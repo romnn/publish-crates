@@ -10,11 +10,20 @@ jobs:
       - uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
+          profile: minimal
           override: true
+          
+      - name: Simulate Publish crates
+        env:
+          # todo: need action repository
+          INPUT_VERSION: latest
+          INPUT_NO-VERIFY: true
+          INPUT_DRY-RUN: true
+        run: cargo run -p action
 
-      - name: Publish crates
-        uses: romnn/publish-crates@main
-        with:
-          version: latest
-          no-verify: true
-          dry-run: true
+      # - name: Publish crates
+      #   uses: romnn/publish-crates@main
+      #   with:
+      #     version: latest
+      #     no-verify: true
+      #     dry-run: true

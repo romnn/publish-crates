@@ -1,0 +1,23 @@
+name: local
+
+on: [push, pull_request]
+
+jobs:
+  local:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+          profile: minimal
+          override: true
+
+      # - name: Simulate publish crates
+      #   # uses: romnn/publish-crates@main
+      #   env:
+      #     INPUT_TOKEN: "123"
+      #     INPUT_VERSION: latest
+      #     INPUT_NO-VERIFY: true
+      #     INPUT_DRY-RUN: true
+      #   run: cargo run -p action
