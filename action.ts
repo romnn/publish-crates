@@ -7,10 +7,8 @@ import {
 } from "action-get-release";
 import path from "path";
 
-// this is a build time constant, `Cargo.toml` does not exist when the action is
-// run
 const manifest =
-    parseCargoPackageManifestSync(path.join(__dirname, "Cargo.toml"));
+    parseCargoPackageManifestSync(path.join(__dirname, "../Cargo.toml"));
 
 function getVersion(): string {
   let version = "latest";
