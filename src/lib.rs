@@ -2,7 +2,7 @@
 
 use actions_toolkit::prelude::*;
 use cargo_metadata::DependencyKind;
-use color_eyre::eyre::{self, eyre, WrapErr};
+use color_eyre::eyre;
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use futures::Future;
 use std::collections::HashMap;
@@ -196,6 +196,7 @@ impl Package {
             cmd.arg("--dry-run");
         }
         if options.resolve_versions {
+            // when resolving versions, we may write to Cargo.toml
             cmd.arg("--allow-dirty");
         }
         let output = cmd.output().await?;
@@ -359,6 +360,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                                     DependencyKind::Build => Some("build-dependencies"),
                                     _ => None,
                                 } {
+                                    // TODO: !!!! do not remove the path thing here!
                                     manifest[kind][&dep.name]["version"] =
                                         value(dep_version.to_string());
                                     manifest[kind][&dep.name]
@@ -392,7 +394,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
 
                 // write updated cargo manifest
                 if need_update {
-                    // println!("{}", &manifest.to_string());
+                    log_message(LogLevel::Warning, &manifest.to_string());
                     log_message(
                         LogLevel::Warning,
                         format!("updating {}", &p.package.manifest_path),

@@ -1,30 +1,34 @@
-import * as core from "@actions/core";
-import * as exec from "@actions/exec";
+import core from "@actions/core";
+import exec from "@actions/exec";
 import {
-  parseCargoPackageManifest,
+  parseCargoPackageManifestSync,
   Repo,
   RustTarget,
 } from "action-get-release";
-import * as path from "path";
+import path from "path";
 
-async function run(): Promise<void> {
+// this is a build time constant, `Cargo.toml` does not exist when the action is
+// run
+const manifest =
+    parseCargoPackageManifestSync(path.join(__dirname, "Cargo.toml"));
+
+function getVersion(): string {
   let version = "latest";
+  let manifestVersion = manifest.package.version;
+  if (manifestVersion && manifestVersion !== "") {
+    version = `v${manifestVersion}`;
+  }
   let versionOverride = core.getInput("version");
   if (versionOverride && versionOverride !== "") {
     version = versionOverride;
-  } else {
-    try {
-      let manifestPath = "./Cargo.toml";
-      core.debug(`reading version from ${manifestPath}`);
-      let manifest = await parseCargoPackageManifest(manifestPath);
-      version = `v${manifest.package.version}`;
-    } catch (err: unknown) {
-      core.warning(`failed to read version from Cargo.toml: ${err}`);
-    }
   }
-  core.debug(`version=${version}`);
+  return version;
+}
 
+async function run(): Promise<void> {
   const repo = new Repo();
+  const version = getVersion();
+  core.debug(`version=${version}`);
 
   let release;
   try {
