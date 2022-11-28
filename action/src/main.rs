@@ -15,7 +15,7 @@ fn not_empty_res(value: String) -> Result<String, std::env::VarError> {
 }
 
 fn parse_duration_string(duration: impl Into<String>) -> eyre::Result<Duration> {
-    let duration = duration.into();
+    let duration = duration.into().to_ascii_lowercase();
     duration_string::DurationString::from_string(duration.clone())
         .map(Into::into)
         .map_err(|_| eyre!("{} is not a valid duration", &duration))
@@ -105,5 +105,38 @@ async fn main() {
     if let Err(err) = run().await {
         log_message(LogLevel::Error, format!("failed: {}", err));
         // set_failed(err);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_duration_string() {
+        assert_eq!(
+            parse_duration_string("30s").ok(),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            parse_duration_string("30S").ok(),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            parse_duration_string("20m").ok(),
+            Some(Duration::from_secs(20 * 60))
+        );
+        // todo: fix this?
+        // assert_eq!(
+        //     parse_duration_string("1m30s").ok(),
+        //     Some(Duration::from_secs(1 * 60 + 30))
+        // );
+    }
+
+    #[test]
+    fn test_not_empty_res() {
+        use std::env::VarError;
+        assert_eq!(not_empty_res("".to_string()), Err(VarError::NotPresent));
+        assert_eq!(not_empty_res("test".to_string()), Ok("test".to_string()));
     }
 }

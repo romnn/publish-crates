@@ -229,9 +229,12 @@ impl Package {
         // wait for package to be available on the registry
         self.wait_package_available(None).await?;
 
-        if let Some(delay) = options.publish_delay {
-            sleep(delay).await;
-        }
+        sleep(
+            options
+                .publish_delay
+                .unwrap_or_else(|| Duration::from_secs(30)),
+        )
+        .await;
 
         let mut cmd = Command::new("cargo");
         cmd.arg("update");
