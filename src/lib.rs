@@ -181,24 +181,6 @@ impl Package {
 
         log_message(LogLevel::Debug, format!("publishing {}", self.package.name));
 
-        // wait for package to be available on the registry
-        self.wait_package_available(None).await?;
-
-        if let Some(delay) = options.publish_delay {
-            sleep(delay).await;
-        }
-        let mut cmd = Command::new("cargo");
-        cmd.arg("update");
-        cmd.current_dir(&self.path);
-        let output = cmd.output().await?;
-        if !output.status.success() {
-            eyre::bail!("command {:?} failed", cmd);
-        }
-
-        *self.published.lock().unwrap() = true;
-        log_message(LogLevel::Debug, format!("published {}", self.package.name));
-        return Ok(self);
-
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
         // cmd.args(options.args);
@@ -219,8 +201,8 @@ impl Package {
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log_message(LogLevel::Debug, stdout);
-        log_message(LogLevel::Debug, stderr);
+        log_message(LogLevel::Debug, &stdout);
+        log_message(LogLevel::Debug, &stderr);
 
         if !output.status.success() {
             eyre::bail!("command {:?} failed: {}", cmd, stderr);
@@ -237,8 +219,25 @@ impl Package {
             *self.published.lock().unwrap() = true;
             return Ok(self);
         }
-        // wait for the package to become available here
+
+        // wait for package to be available on the registry
+        self.wait_package_available(None).await?;
+
+        if let Some(delay) = options.publish_delay {
+            sleep(delay).await;
+        }
+
+        let mut cmd = Command::new("cargo");
+        cmd.arg("update");
+        cmd.current_dir(&self.path);
+        let output = cmd.output().await?;
+        if !output.status.success() {
+            eyre::bail!("command {:?} failed", cmd);
+        }
+
         *self.published.lock().unwrap() = true;
+        log_message(LogLevel::Debug, format!("published {}", self.package.name));
+
         Ok(self)
     }
 }
