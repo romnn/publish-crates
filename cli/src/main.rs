@@ -22,22 +22,16 @@ fn parse_duration_string(duration: &str) -> eyre::Result<Duration> {
 struct Options {
     #[clap(short = 'p', long = "path")]
     path: Option<PathBuf>,
-    // #[clap(short = 't', long = "token")]
-    // token: String,
     #[clap(long = "registry-token")]
     registry_token: Option<String>,
     #[clap(long = "dry-run")]
     dry_run: bool,
-    // #[clap(long = "check-repo")]
-    // check_repo: bool,
     #[clap(long = "publish-delay", value_parser = parse_duration_string)]
     publish_delay: Option<Duration>,
     #[clap(long = "no-verify")]
     no_verify: bool,
     #[clap(long = "resolve-versions")]
     resolve_versions: bool,
-    // #[clap(long = "ignore-unpublished")]
-    // ignore_unpublished: bool,
     #[clap(long = "include")]
     include: Option<Vec<String>>,
     #[clap(long = "exclude")]
@@ -61,14 +55,11 @@ impl Into<publish::Options> for Options {
 
         publish::Options {
             path,
-            // token: self.token,
             registry_token: self.registry_token,
             dry_run: self.dry_run,
-            // check_repo: self.check_repo,
             publish_delay: self.publish_delay.into(),
             no_verify: self.no_verify,
             resolve_versions: self.resolve_versions,
-            // ignore_unpublished: self.ignore_unpublished,
             include: self.include,
             exclude: self.exclude,
         }

@@ -14,14 +14,6 @@ fn not_empty_res(value: String) -> Result<String, std::env::VarError> {
     }
 }
 
-// fn not_empty(value: String) -> Option<String> {
-//     if value.is_empty() {
-//         None
-//     } else {
-//         Some(value)
-//     }
-// }
-
 fn parse_duration_string(duration: impl Into<String>) -> eyre::Result<Duration> {
     let duration = duration.into();
     duration_string::DurationString::from_string(duration.clone())
@@ -52,12 +44,6 @@ async fn run() -> eyre::Result<()> {
         .map(PathBuf::from)
         .or_else(|_| std::env::current_dir())
         .wrap_err("path is not specified")?;
-
-    // let token = input("token")
-    //     .and_then(not_empty_res)
-    //     .or_else(|_| std::env::var("GITHUB_TOKEN"))
-    //     .and_then(not_empty_res)
-    //     .wrap_err("token is not specified")?;
 
     let registry_token = input("registry-token").and_then(not_empty_res).ok();
 
@@ -102,7 +88,6 @@ async fn run() -> eyre::Result<()> {
     );
     let options = Options {
         path,
-        // token,
         registry_token,
         dry_run,
         publish_delay,

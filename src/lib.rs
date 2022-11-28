@@ -17,9 +17,6 @@ pub struct Options {
     /// Path to package or workspace
     pub path: PathBuf,
 
-    // /// GitHub token
-    // pub token: String,
-
     /// Cargo registry token
     pub registry_token: Option<String>,
 
@@ -179,7 +176,10 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        log_message(LogLevel::Warning, format!("publishing {}", self.package.name));
+        log_message(
+            LogLevel::Warning,
+            format!("publishing {}", self.package.name),
+        );
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
@@ -236,7 +236,10 @@ impl Package {
         }
 
         *self.published.lock().unwrap() = true;
-        log_message(LogLevel::Warning, format!("published {}", self.package.name));
+        log_message(
+            LogLevel::Warning,
+            format!("published {}", self.package.name),
+        );
 
         Ok(self)
     }
@@ -394,15 +397,13 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         LogLevel::Warning,
                         format!("updating {}", &p.package.manifest_path),
                     );
-                    if false {
-                        use tokio::io::AsyncWriteExt;
-                        let mut f = tokio::fs::OpenOptions::new()
-                            .write(true)
-                            .truncate(true)
-                            .open(&p.package.manifest_path)
-                            .await?;
-                        f.write_all(manifest.to_string().as_bytes()).await?;
-                    }
+                    use tokio::io::AsyncWriteExt;
+                    let mut f = tokio::fs::OpenOptions::new()
+                        .write(true)
+                        .truncate(true)
+                        .open(&p.package.manifest_path)
+                        .await?;
+                    f.write_all(manifest.to_string().as_bytes()).await?;
                 }
 
                 Ok(())
