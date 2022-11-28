@@ -53,11 +53,11 @@ async fn run() -> eyre::Result<()> {
         .or_else(|_| std::env::current_dir())
         .wrap_err("path is not specified")?;
 
-    let token = input("token")
-        .and_then(not_empty_res)
-        .or_else(|_| std::env::var("GITHUB_TOKEN"))
-        .and_then(not_empty_res)
-        .wrap_err("token is not specified")?;
+    // let token = input("token")
+    //     .and_then(not_empty_res)
+    //     .or_else(|_| std::env::var("GITHUB_TOKEN"))
+    //     .and_then(not_empty_res)
+    //     .wrap_err("token is not specified")?;
 
     let registry_token = input("registry-token").and_then(not_empty_res).ok();
 
@@ -102,7 +102,7 @@ async fn run() -> eyre::Result<()> {
     );
     let options = Options {
         path,
-        token,
+        // token,
         registry_token,
         dry_run,
         publish_delay,

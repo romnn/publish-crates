@@ -22,8 +22,8 @@ fn parse_duration_string(duration: &str) -> eyre::Result<Duration> {
 struct Options {
     #[clap(short = 'p', long = "path")]
     path: Option<PathBuf>,
-    #[clap(short = 't', long = "token")]
-    token: String,
+    // #[clap(short = 't', long = "token")]
+    // token: String,
     #[clap(long = "registry-token")]
     registry_token: Option<String>,
     #[clap(long = "dry-run")]
@@ -61,7 +61,7 @@ impl Into<publish::Options> for Options {
 
         publish::Options {
             path,
-            token: self.token,
+            // token: self.token,
             registry_token: self.registry_token,
             dry_run: self.dry_run,
             // check_repo: self.check_repo,

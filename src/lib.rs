@@ -17,8 +17,8 @@ pub struct Options {
     /// Path to package or workspace
     pub path: PathBuf,
 
-    /// GitHub token
-    pub token: String,
+    // /// GitHub token
+    // pub token: String,
 
     /// Cargo registry token
     pub registry_token: Option<String>,
@@ -153,7 +153,7 @@ impl Package {
         loop {
             ticker.tick().await;
             log_message(
-                LogLevel::Debug,
+                LogLevel::Warning,
                 format!(
                     "checking if {} {} is available",
                     self.package.name,
@@ -179,7 +179,7 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        log_message(LogLevel::Debug, format!("publishing {}", self.package.name));
+        log_message(LogLevel::Warning, format!("publishing {}", self.package.name));
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
@@ -210,7 +210,7 @@ impl Package {
 
         if options.dry_run {
             log_message(
-                LogLevel::Debug,
+                LogLevel::Warning,
                 format!(
                     "dry-run: skipping waiting for {} {} to be published",
                     &self.package.name, self.package.version
@@ -236,7 +236,7 @@ impl Package {
         }
 
         *self.published.lock().unwrap() = true;
-        log_message(LogLevel::Debug, format!("published {}", self.package.name));
+        log_message(LogLevel::Warning, format!("published {}", self.package.name));
 
         Ok(self)
     }
@@ -244,7 +244,7 @@ impl Package {
 
 pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
     log_message(
-        LogLevel::Debug,
+        LogLevel::Warning,
         format!("searching cargo packages at {}", options.path.display()),
     );
 
@@ -270,7 +270,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         if publish.is_empty() {
                             // skip package
                             log_message(
-                                LogLevel::Debug,
+                                LogLevel::Warning,
                                 format!("skipping: {} (publish=false)", package.name),
                             );
                             return None;
@@ -281,7 +281,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                             if !include.contains(&package.name) {
                                 // skip package
                                 log_message(
-                                    LogLevel::Debug,
+                                    LogLevel::Warning,
                                     format!("skipping: {} (not included)", package.name),
                                 );
                                 return None;
@@ -292,7 +292,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         if exclude.contains(&package.name) {
                             // skip package
                             log_message(
-                                LogLevel::Debug,
+                                LogLevel::Warning,
                                 format!("skipping: {} (excluded)", package.name),
                             );
                             return None;
@@ -417,7 +417,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
 
     // println!("{:#?}", &packages);
     log_message(
-        LogLevel::Debug,
+        LogLevel::Warning,
         format!(
             "found packages: {:?}",
             packages

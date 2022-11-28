@@ -1,11 +1,11 @@
 [package]
-name = "cli"
+name = "cargo-publish-crates"
 version = "0.0.1"
 edition = "2021"
 publish = false
 
 [[bin]]
-name = "publish-crates-cli"
+name = "cargo-publish-crates"
 path = "src/main.rs"
 
 [dependencies]
