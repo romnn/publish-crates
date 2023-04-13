@@ -6,6 +6,7 @@ publish = true
 
 [workspace]
 members = [
+  "actions-derive",
   "action",
   "cli",
 ]
@@ -29,10 +30,11 @@ toml_edit = "0"
 futures = "0.3"
 tokio = { version = "1", features = ["full"] }
 async-process = "1"
-color-eyre = "0.6"
+color-eyre = "0"
 thiserror = "1"
 crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
 reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
+actions-derive = { path = "./actions-derive" }
 
 [dev-dependencies]
 pretty_assertions = "1"

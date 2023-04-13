@@ -12,5 +12,6 @@ path = "src/main.rs"
 publish-crates = { path = "../" }
 duration-string = "0"
 tokio = { version = "1", features = ["full"] }
-color-eyre = "0.6"
+color-eyre = "0"
 actions-toolkit = "0"
+actions-derive = { path = "../actions-derive" }

@@ -1,0 +1,13 @@
+[package]
+name = "actions-derive"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = "1"
+quote = "1"
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0"
