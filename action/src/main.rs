@@ -11,11 +11,6 @@ pub mod actions {
     use color_eyre::eyre;
     use std::env;
 
-    // pub struct Core<W, E> {
-    //     stdout: W,
-    //     stderr: E,
-    // }
-
     #[derive(Debug)]
     pub enum LogLevel {
         Debug,
@@ -61,6 +56,123 @@ pub mod actions {
         println!("::{}::{}", level, escape_data(v));
         Ok(())
     }
+
+    /// Sets env variable for this action and future actions in the job.
+    pub fn export_var(name: impl std::fmt::Display, val: impl std::fmt::Display) {
+        // const convertedVal = toCommandValue(val)
+        // process.env[name] = convertedVal
+        //
+        // const filePath = process.env['GITHUB_ENV'] || ''
+        // if (filePath) {
+        //   return issueFileCommand('ENV', prepareKeyValueMessage(name, val))
+        // }
+        //
+        // issueCommand('set-env', {name}, convertedVal)
+    }
+
+    /// Registers a secret which will get masked from logs.
+    pub fn set_secret(secret: impl std::fmt::Display) {
+        issue_command("add-mask", {}, secret)
+    }
+
+    /// Prepends inputPath to the PATH (for this action and future actions).
+    pub fn add_path(path: impl AsRef<str>) {
+        if let Ok(github_path) = env::var("GITHUB_PATH") {
+            issue_file_command("PATH", path)
+        } else {
+            issue_command("add-path", {}, path)
+        }
+        // process.env['PATH'] = {inputPath}${path.delimiter}${process.env['PATH']}}
+    }
+
+    /// Enables or disables the echoing of commands into stdout for the rest of the step.
+    ///
+    /// Echoing is disabled by default if ACTIONS_STEP_DEBUG is not set.
+    pub fn set_command_echo(enabled: bool) {
+        issue("echo", if enabled { "on" } else { "off" });
+    }
+
+    /// Sets the action status to failed.
+    ///
+    /// When the action exits it will be with an exit code of 1.
+    pub fn set_failed(message: impl std::fmt::Display) {
+        // process.exitCode = ExitCode.Failure
+        //
+        // error(message)
+    }
+
+    /// Gets whether Actions Step Debug is on or not.
+    pub fn is_debug() -> bool {
+        env::var("RUNNER_DEBUG")
+            .map(|v| v.trim() == "1")
+            .unwrap_or(false)
+    }
+
+    /// Writes debug message to user log.
+    pub fn debug(message: impl std::fmt::Display) {
+        issue_command("debug", {}, message)
+    }
+
+    #[derive(Default, Debug, Hash, PartialEq, Eq)]
+    pub struct AnnotationProperties {}
+
+    /// Adds an error issue.
+    pub fn error(message: impl std::fmt::Display, props: AnnotationProperties) {
+        issue_command("error", to_command_properties(props), message)
+    }
+
+    /// Adds a warning issue.
+    pub fn warning(message: impl std::fmt::Display, props: AnnotationProperties) {
+        issue_command("warning", to_command_properties(props), message)
+    }
+
+    /// Adds a notice issue
+    pub fn notice(message: impl std::fmt::Display, props: AnnotationProperties) {
+        issue_command("notice", to_command_properties(props), message)
+    }
+
+    /// Begin an output group.
+    ///
+    /// Output until the next group_end will be foldable in this group.
+    pub fn start_group(name: impl std::fmt::Display) {
+        issue("group", name)
+    }
+
+    /// End an output group.
+    pub fn end_group() {
+        issue("endgroup")
+    }
+
+    /// Saves state for current action, the state can only be retrieved by this action's post job execution.
+    pub fn save_state(name: String, value: impl std::fmt::Display) {
+        if let Ok(github_path) = env::var("GITHUB_STATE") {
+            return issue_file_command("STATE", prepare_kv_message(name, value));
+        }
+
+        // issue_command("save-state", {name}, toCommandValue(value))
+    }
+
+    /// Gets the value of an state set by this action's main execution.
+    pub fn get_state(name: String) -> Option<String> {
+        env::var(format!("STATE_{}", name)).ok()
+    }
+
+    /// Wrap an asynchronous function call in a group.
+    ///
+    /// Returns the same type as the function itself.
+    // export async function group<T>(name: string, fn: () => Promise<T>): Promise<T> {
+    //   startGroup(name)
+    //
+    //   let result: T
+    //
+    //   try {
+    //     result = await fn()
+    //   } finally {
+    //     endGroup()
+    //   }
+    //
+    //   return result
+    // }
 
     pub fn log_message_to(
         mut out: impl std::io::Write,
