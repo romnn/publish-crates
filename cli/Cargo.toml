@@ -10,7 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 publish-crates = { path = "../" }
-clap = { version = "4", fatures = ["derive"] }
+clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 color-eyre = "0"
 duration-string = "0"

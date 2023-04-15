@@ -9,6 +9,8 @@ name = "publish-crates-action"
 path = "src/main.rs"
 
 [dependencies]
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
 publish-crates = { path = "../" }
 duration-string = "0"
 tokio = { version = "1", features = ["full"] }
