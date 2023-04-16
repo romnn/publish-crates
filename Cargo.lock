@@ -37,6 +37,7 @@ dependencies = [
 name = "actions-derive"
 version = "0.1.0"
 dependencies = [
+ "prettyplease",
  "proc-macro2",
  "quote",
  "serde",
@@ -1036,6 +1037,16 @@ dependencies = [
  "diff",
  "output_vt100",
  "yansi",
+]
+
+[[package]]
+name = "prettyplease"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1ceca8aaf45b5c46ec7ed39fff75f57290368c1846d33d24a122ca81416ab058"
+dependencies = [
+ "proc-macro2",
+ "syn 2.0.15",
 ]
 
 [[package]]

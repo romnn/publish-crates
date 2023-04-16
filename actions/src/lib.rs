@@ -7,6 +7,14 @@ use std::path::Path;
 #[cfg(feature = "derive")]
 pub use actions_derive::Action;
 
+#[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct Input {
+    pub description: Option<String>,
+    pub deprecation_message: Option<String>,
+    pub default: Option<String>,
+    pub required: Option<bool>,
+}
+
 #[derive(Debug)]
 pub enum LogLevel {
     Debug,
@@ -279,33 +287,6 @@ pub fn get_multiline_input<'a>(name: impl AsRef<str>) -> Result<Vec<String>, env
     let value = get_raw_input(name)?;
     Ok(value.lines().map(ToOwned::to_owned).collect())
 }
-
-#[derive(Debug, Hash, PartialEq, Eq, Ord, PartialOrd, Clone)]
-pub struct Input(pub String);
-
-impl AsRef<str> for Input {
-    fn as_ref(&self) -> &str {
-        &self.0
-    }
-}
-
-impl TryFrom<Input> for bool {
-    type Error = std::convert::Infallible;
-
-    fn try_from(input: Input) -> Result<Self, Self::Error> {
-        Ok(true)
-        // if value <= 0 {
-        //     Err("GreaterThanZero only accepts values greater than zero!")
-        // } else {
-        //     Ok(GreaterThanZero(value))
-        // }
-    }
-}
-// pub trait TryInto<T>: Sized {
-//     type Error;
-//
-//     fn try_into(self) -> Result<T, Self::Error>;
-// }
 
 /// Enables or disables the echoing of commands into stdout for the rest of the step.
 ///

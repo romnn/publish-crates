@@ -29,28 +29,19 @@ impl actions::ParseInput for Duration {
     }
 }
 
-// #[actions_derive::action = "../../action.yml"]
 #[derive(Action)]
 #[action = "../../action.yml"]
-pub struct ActionD {
-    value: i32,
-}
-
-// #[action("../../action.yml")]
-// pub struct ActionA {}
-// {
-//     // value: i32,
-// }
+pub struct PublishCratesAction {}
 
 async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
 
     // let action = ActionD { value: 0 };
-    ActionD::description();
+    PublishCratesAction::description();
 
     let cwd = std::env::current_dir()?;
 
-    let path = ActionD::path::<String>()?
+    let path = PublishCratesAction::path::<String>()?
         .map(PathBuf::from)
         .unwrap_or(cwd.clone());
 
@@ -62,9 +53,12 @@ async fn run() -> eyre::Result<()> {
         .unwrap_or(cwd);
         // .wrap_err("path is not specified")?;
 
-    let registry_token = actions::get_input::<String>("registry-token")?;
+    
+    let registry_token = PublishCratesAction::registry_token::<String>()?;
+    // let registry_token = actions::get_input::<String>("registry-token")?;
 
-    let dry_run = actions::get_input::<bool>("dry-run")
+    // let dry_run = actions::get_input::<bool>("dry-run")
+    let dry_run = PublishCratesAction::dry_run::<bool>()
         // .ok()
         // .map(parse_bool)
         // .map_or(Ok(None), |v| v.map(Some))
