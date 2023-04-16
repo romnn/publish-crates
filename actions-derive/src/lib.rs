@@ -1,5 +1,6 @@
 #![allow(warnings)]
-use proc_macro::TokenStream;
+// use proc_macro::TokenStream;
+use proc_macro2::{Span, TokenStream};
 use quote::{quote, ToTokens};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -60,13 +61,6 @@ struct Manifest {
     outputs: HashMap<String, Output>,
 }
 
-#[proc_macro_derive(Action)]
-pub fn action_derive(input: TokenStream) -> TokenStream {
-    let tokens: TokenStream = quote! {}.into();
-    // eprintln!("TOKENS: {}", tokens);
-    tokens
-}
-
 fn resolve_path(path: impl AsRef<Path>) -> PathBuf {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()));
     if root.join(path.as_ref()).exists() {
@@ -84,8 +78,6 @@ fn parse_action_yml(path: impl AsRef<Path>) -> Manifest {
     let mut reader = std::io::BufReader::new(file);
     serde_yaml::from_reader(reader).unwrap()
 }
-
-use proc_macro2::Span;
 
 fn replace_invalid_identifier_chars(s: &str) -> String {
     s.strip_prefix('$')
@@ -147,28 +139,148 @@ fn str_to_ident(s: &str) -> syn::Ident {
 }
 
 #[derive()]
-struct Action {
+struct ActionAttributes {
     // root: Option<String>,
     // manifest_path: syn::LitStr,
     manifest_path: PathBuf,
 }
 
-impl syn::parse::Parse for Action {
+impl syn::parse::Parse for ActionAttributes {
     fn parse(input: syn::parse::ParseStream<'_>) -> syn::Result<Self> {
         let manifest_path: syn::LitStr = input.parse()?;
-        Ok(Action {
+        Ok(Self {
             manifest_path: resolve_path(manifest_path.value()),
         })
     }
 }
 
+fn get_attribute(attr: &syn::Attribute) -> String {
+    // syn::NestedMeta::Lit(lit) => match lit {
+    //             syn::Lit::Str(s) => {
+
+    let meta = attr.parse_meta().unwrap();
+    // println!("{:?}", quote! { #meta });
+    // "".into()
+    match &meta {
+        syn::Meta::NameValue(syn::MetaNameValue { lit, .. }) => match lit {
+            // syn::Meta::NameValue(name_value) => match name_value {
+            syn::Lit::Str(s) => s.value(),
+            // syn::Expr::Lit(syn::ExprLit {
+            //     lit: syn::Lit::Str(s),
+            //     ..
+            // }) => s.value(),
+            _ => panic!("action attribute must be a string"),
+        },
+        _ => panic!("action attribute must be of the form `action = \"...\"`"),
+    }
+}
+
+fn parse_derive(ast: syn::DeriveInput) -> (syn::Ident, syn::Generics, PathBuf) {
+    let name = ast.ident;
+    let generics = ast.generics;
+
+    let manifests: Vec<_> = ast
+        .attrs
+        .iter()
+        .filter(|attr| attr.path.is_ident("action"))
+        .map(get_attribute)
+        .map(resolve_path)
+        .collect();
+
+    let manifest = manifests.into_iter().next().expect("a path to an action manifest (action.yml) file needs to be provided with the #[action = \"PATH\"] attribute");
+    (name, generics, manifest)
+}
+
+#[proc_macro_derive(Action, attributes(action))]
+pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    // let action: ActionAttributes = syn::parse2(attrs.into()).unwrap();
+    let ast: syn::DeriveInput = syn::parse2(input.into()).unwrap();
+    let (name, generics, manifest) = parse_derive(ast);
+    let manifest = parse_action_yml(manifest);
+    println!("name: {:?}", name);
+    // println!("generics: {:?}", generics);
+    println!("manifest: {:?}", manifest);
+    // let tokens: TokenStream = quote! {}.into();
+
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    let derived_methods: TokenStream = manifest
+        .inputs
+        .into_iter()
+        .map(|(name, input)| {
+            let fn_name = str_to_ident(&name);
+            quote! {
+                pub fn #fn_name<T>() -> Result<Option<T>, <T as ::actions::ParseInput>::Error>
+                where T: ::actions::ParseInput {
+                    ::actions::get_input::<T>(#name)
+                }
+            }
+        })
+        .collect();
+
+    let description = manifest.description;
+
+    let input_impl = quote! {
+        #[allow(clippy::all)]
+        impl #impl_generics #name #ty_generics #where_clause {
+            pub fn description() -> &'static str {
+                #description
+            }
+            #derived_methods
+        }
+    };
+
+    // let input_impl = quote! {
+    //     #[allow(clippy::all)]
+    //     impl #impl_generics ::pest::Parser<Rule> for #name #ty_generics #where_clause {
+    //         fn parse<'i>(
+    //             rule: Rule,
+    //             input: &'i str
+    //         ) -> #result<
+    //             ::pest::iterators::Pairs<'i, Rule>,
+    //             ::pest::error::Error<Rule>
+    //         > {
+    //             mod rules {
+    //                 #![allow(clippy::upper_case_acronyms)]
+    //                 pub mod hidden {
+    //                     use super::super::Rule;
+    //                     #skip
+    //                 }
+    //
+    //                 pub mod visible {
+    //                     use super::super::Rule;
+    //                     #( #rules )*
+    //                 }
+    //
+    //                 pub use self::visible::*;
+    //             }
+    //
+    //             ::pest::state(input, |state| {
+    //                 match rule {
+    //                     #patterns
+    //                 }
+    //             })
+    //         }
+    //     }
+    // };
+    // eprintln!("TOKENS: {}", tokens);
+    // eprintln!("{}", input_impl.into())
+    eprintln!("{}", &input_impl.to_string());
+    input_impl.into()
+}
+
 #[proc_macro_attribute]
-pub fn action(attrs: TokenStream, input: TokenStream) -> TokenStream {
+pub fn action(
+    attrs: proc_macro::TokenStream,
+    input: proc_macro::TokenStream,
+) -> proc_macro::TokenStream {
     eprintln!("{:#?}", attrs);
-    let action = syn::parse_macro_input!(attrs as Action);
+    // let action = syn::parse_macro_input!(attrs as ActionAttributes);
+    let action: ActionAttributes = syn::parse2(attrs.into()).unwrap();
     eprintln!("{}", action.manifest_path.display());
+
     // let attrs = syn::parse_macro_input!(attrs as syn::AttributeArgs);
-    let ast = syn::parse_macro_input!(input as syn::DeriveInput);
+    let ast: syn::DeriveInput = syn::parse2(input.into()).unwrap();
+    // let ast = syn::parse_macro_input!(input as syn::ItemStruct);
 
     // let mut manifest = None;
     // for attr in attrs {
@@ -218,23 +330,33 @@ pub fn action(attrs: TokenStream, input: TokenStream) -> TokenStream {
     let name = ast.ident;
     // eprintln!("{}", name);
 
-    let override_fields = match ast.data {
-        syn::Data::Struct(syn::DataStruct {
-            fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
-            ..
-        }) => named,
-        _ => unimplemented!("action macro can only be used on structs"),
-    };
+    // assert!(matches!(ast.data, syn::Data::Ident { .. }));
+    assert!(matches!(
+        ast.data,
+        syn::Data::Struct(syn::DataStruct { .. })
+    ));
+    // let override_fields = match ast.data {
+    //     // syn::Data::Struct(syn::DataStruct {
+    //     //     fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
+    //     //     ..
+    //     // }) => named,
+    //     syn::Data::Struct(syn::ItemStruct {
+    //         // fields: syn::Fields::Named(syn::FieldsNamed { ref named, .. }),
+    //         ..
+    //     }) => named,
+    //
+    //     other => unimplemented!("action macro can only be used on structs, got {:?}", other),
+    // };
 
-    let builder_fields = override_fields.iter().map(|f| {
-        let name = &f.ident;
-        let ty = &f.ty;
-        for attr in &f.attrs {
-            // if attr.path().is_ident("repr") {}
-        }
-        // eprintln!("field {:?}: {:#?}", name, ty.to_token_stream());
-        quote! { pub #name: #ty }
-    });
+    // let builder_fields = override_fields.iter().map(|f| {
+    //     let name = &f.ident;
+    //     let ty = &f.ty;
+    //     for attr in &f.attrs {
+    //         // if attr.path().is_ident("repr") {}
+    //     }
+    //     // eprintln!("field {:?}: {:#?}", name, ty.to_token_stream());
+    //     quote! { pub #name: #ty }
+    // });
 
     let derived_fields = fields.iter().map(|(name, ty)| {
         quote! { pub #name: #ty }
@@ -245,6 +367,10 @@ pub fn action(attrs: TokenStream, input: TokenStream) -> TokenStream {
             #(#derived_fields,)*
         }
     };
+    // let tokens = quote! {
+    //     #struct
+    // };
+
     // eprintln!("{:?}", &tokens);
     eprintln!("{}", &tokens.to_string());
     tokens.into()

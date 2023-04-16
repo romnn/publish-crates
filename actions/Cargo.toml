@@ -1,0 +1,17 @@
+[package]
+name = "actions"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+default = []
+
+derive = ["dep:actions-derive"]
+
+[package.metadata.cargo-feature-combinations]
+denylist = ["default"]
+
+[dependencies]
+thiserror = "1"
+uuid = { version = "1", features = ["v4"] }
+actions-derive = { path = "../actions-derive", optional = true }

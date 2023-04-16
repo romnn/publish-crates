@@ -7,6 +7,7 @@ publish = true
 [workspace]
 members = [
   "actions-derive",
+  "actions",
   "action",
   "cli",
 ]
@@ -34,7 +35,7 @@ color-eyre = "0"
 thiserror = "1"
 crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
 reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
-actions-derive = { path = "./actions-derive" }
+actions = { path = "./actions", features = ["derive"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
