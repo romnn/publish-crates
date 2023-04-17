@@ -1,17 +1,16 @@
 #![allow(warnings)]
 
 use std::collections::HashMap;
-use std::env;
 use std::path::Path;
 
 #[cfg(feature = "derive")]
 pub use actions_derive::Action;
 
 #[derive(Default, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Input {
-    pub description: Option<String>,
-    pub deprecation_message: Option<String>,
-    pub default: Option<String>,
+pub struct Input<'a> {
+    pub description: Option<&'a str>,
+    pub deprecation_message: Option<&'a str>,
+    pub default: Option<&'a str>,
     pub required: Option<bool>,
 }
 
@@ -33,6 +32,116 @@ impl std::fmt::Display for LogLevel {
         }
     }
 }
+
+pub fn input_env_var(name: impl Into<String>) -> String {
+    let mut var: String = name.into();
+    if !var.starts_with("INPUT_") {
+        var = format!("INPUT_{}", var);
+    }
+    var = var.replace(' ', "_").to_uppercase();
+    var
+}
+
+pub mod env {
+    use std::collections::HashMap;
+
+    #[derive(Debug, Default)]
+    pub struct Env(HashMap<String, String>);
+
+    impl Env {
+        pub fn new(values: HashMap<String, String>) -> Self {
+            let inner = values
+                .into_iter()
+                .map(|(k, v)| (super::input_env_var(k), v))
+                .collect();
+            Self(inner)
+        }
+
+        #[cfg(feature = "serde")]
+        pub fn from_str(env: &str) -> Result<Self, serde_yaml::Error> {
+            Ok(Self::new(serde_yaml::from_str(env)?))
+        }
+
+        #[cfg(feature = "serde")]
+        pub fn from_reader(reader: impl std::io::Read) -> Result<Self, serde_yaml::Error> {
+            Ok(Self::new(serde_yaml::from_reader(reader)?))
+        }
+    }
+
+    impl std::borrow::Borrow<HashMap<String, String>> for Env {
+        fn borrow(&self) -> &HashMap<String, String> {
+            &self.0
+        }
+    }
+
+    impl std::ops::Deref for Env {
+        type Target = HashMap<String, String>;
+
+        fn deref(&self) -> &Self::Target {
+            &self.0
+        }
+    }
+
+    impl std::ops::DerefMut for Env {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            &mut self.0
+        }
+    }
+
+    pub trait ReadEnv {
+        fn get(&self, key: &str) -> Result<String, std::env::VarError>;
+    }
+
+    pub trait WriteEnv {
+        fn set(&mut self, key: String, value: String);
+    }
+
+    impl<T> ReadEnv for T
+    where
+        T: std::borrow::Borrow<HashMap<String, String>>,
+    {
+        fn get(&self, key: &str) -> Result<String, std::env::VarError> {
+            self.borrow()
+                .get(key)
+                .ok_or(std::env::VarError::NotPresent)
+                .cloned()
+        }
+    }
+
+    impl<T> WriteEnv for T
+    where
+        T: std::borrow::BorrowMut<HashMap<String, String>>,
+    {
+        fn set(&mut self, key: String, value: String) {
+            self.borrow_mut().insert(key, value);
+        }
+    }
+
+    pub struct StdEnv;
+
+    pub static ENV: StdEnv = StdEnv {};
+
+    impl ReadEnv for StdEnv {
+        fn get(&self, key: &str) -> Result<String, std::env::VarError> {
+            std::env::var(key)
+        }
+    }
+
+    impl WriteEnv for StdEnv {
+        fn set(&mut self, key: String, value: String) {
+            std::env::set_var(key, value);
+        }
+    }
+
+    pub trait ParseEnv {
+        type Error: std::error::Error;
+
+        fn from_str(config: &str) -> Result<HashMap<String, String>, Self::Error>;
+        fn from_reader(reader: impl std::io::Read) -> Result<HashMap<String, String>, Self::Error>;
+    }
+}
+
+pub use env::{Env, ReadEnv, WriteEnv};
 
 pub mod utils {
     /// toPosixPath converts the given path to the posix form.
@@ -154,9 +263,9 @@ pub fn prepare_kv_message(key: &str, value: &str) -> Result<String, ValueError> 
 
 /// Sets env variable for this action and future actions in the job.
 pub fn export_var(name: impl AsRef<str>, value: impl ToString) -> Result<(), ValueError> {
-    env::set_var(name.as_ref(), value.to_string());
+    std::env::set_var(name.as_ref(), value.to_string());
 
-    if let Ok(github_path) = env::var("GITHUB_ENV") {
+    if let Ok(github_path) = std::env::var("GITHUB_ENV") {
         let message = prepare_kv_message(name.as_ref(), &value.to_string())?;
         issue_file_command("ENV", &message);
         return Ok(());
@@ -175,13 +284,13 @@ pub fn set_secret(secret: impl ToString) {
     issue(CommandBuilder::new("add-mask", secret.to_string()).build());
 }
 
-pub fn append_to_path(path: impl AsRef<Path>) -> Result<(), env::JoinPathsError> {
-    if let Some(old_path) = env::var_os("PATH") {
+pub fn append_to_path(path: impl AsRef<Path>) -> Result<(), std::env::JoinPathsError> {
+    if let Some(old_path) = std::env::var_os("PATH") {
         let paths = [path.as_ref().to_path_buf()]
             .into_iter()
-            .chain(env::split_paths(&old_path));
-        let new_path = env::join_paths(paths)?;
-        env::set_var("PATH", &new_path);
+            .chain(std::env::split_paths(&old_path));
+        let new_path = std::env::join_paths(paths)?;
+        std::env::set_var("PATH", &new_path);
     }
     Ok(())
 }
@@ -189,9 +298,9 @@ pub fn append_to_path(path: impl AsRef<Path>) -> Result<(), env::JoinPathsError>
 /// Prepends inputPath to the PATH.
 ///
 /// For this action and future actions.
-pub fn add_path(path: impl AsRef<Path>) -> Result<(), env::JoinPathsError> {
+pub fn add_path(path: impl AsRef<Path>) -> Result<(), std::env::JoinPathsError> {
     let path_string = path.as_ref().to_string_lossy();
-    if let Ok(github_path) = env::var("GITHUB_PATH") {
+    if let Ok(github_path) = std::env::var("GITHUB_PATH") {
         issue_file_command("PATH", &path_string);
     } else {
         issue(CommandBuilder::new("add-path", path_string).build());
@@ -200,25 +309,9 @@ pub fn add_path(path: impl AsRef<Path>) -> Result<(), env::JoinPathsError> {
     append_to_path(path)
 }
 
-// #[derive(thiserror::Error, Debug, PartialEq)]
-// pub enum InputError {
-//     #[error(transparent)]
-//     Missing(#[from] env::VarError),
-//     // Parse(#[from])
-// }
-
-// impl TryFrom<String> for bool {
-//     type Error = std::convert::Infallible;
-//
-//     fn try_from(s: &str) -> Result<Measurement, String> {
-//         let value = s[0..s.len() - 1].parse::<i16>();
-//         let unit = s.chars().last();
-//         match (value, unit) {
-//             (Ok(v), Some(u)) => Ok(Measurement { value: v, unit: u }),
-//             _ => Err("Invalid value or unit".to_string()),
-//         }
-//     }
-// }
+pub trait Parse {
+    fn parse<E: ReadEnv>(env: &E) -> HashMap<String, Option<String>>;
+}
 
 pub trait ParseInput: Sized {
     type Error: std::error::Error;
@@ -226,7 +319,7 @@ pub trait ParseInput: Sized {
     fn parse(value: String) -> Result<Self, Self::Error>;
 }
 
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, PartialEq, Eq, Hash, Clone)]
 pub enum ParseError {
     #[error("invalid boolean value \"{0}\"")]
     Bool(String),
@@ -261,30 +354,44 @@ pub fn get_input<T>(name: impl AsRef<str>) -> Result<Option<T>, <T as ParseInput
 where
     T: ParseInput,
 {
-    match get_raw_input(name) {
+    match get_raw_input(&env::ENV, name) {
         Ok(input) => Some(T::parse(input)).transpose(),
         Err(_) => Ok(None),
     }
 }
 
 /// Gets the raw value of an input.
-pub fn get_raw_input(name: impl AsRef<str>) -> Result<String, env::VarError> {
-    let key = format!("INPUT_{}", name.as_ref())
-        .replace(' ', "_")
-        .to_uppercase();
-    let value = env::var(key)?;
+pub fn get_raw_input(
+    env: &impl ReadEnv,
+    name: impl AsRef<str>,
+) -> Result<String, std::env::VarError> {
+    let value = env.get(&input_env_var(name.as_ref()))?;
     if value.is_empty() {
         Err(std::env::VarError::NotPresent)
-        // Err(InputError::Missing(std::env::VarError::NotPresent))
     } else {
         Ok(value)
-        // Ok(Input(value))
+    }
+}
+
+/// Gets the value of an input.
+///
+/// Attempts to parse as T.
+pub fn get_input_from<T>(
+    env: &impl ReadEnv,
+    name: impl AsRef<str>,
+) -> Result<Option<T>, <T as ParseInput>::Error>
+where
+    T: ParseInput,
+{
+    match get_raw_input(env, name) {
+        Ok(input) => Some(T::parse(input)).transpose(),
+        Err(_) => Ok(None),
     }
 }
 
 /// Gets the values of an multiline input.
-pub fn get_multiline_input<'a>(name: impl AsRef<str>) -> Result<Vec<String>, env::VarError> {
-    let value = get_raw_input(name)?;
+pub fn get_multiline_input<'a>(name: impl AsRef<str>) -> Result<Vec<String>, std::env::VarError> {
+    let value = get_raw_input(&env::ENV, name)?;
     Ok(value.lines().map(ToOwned::to_owned).collect())
 }
 
@@ -312,7 +419,7 @@ pub fn fail(message: impl std::fmt::Display) {
 
 /// Gets whether Actions Step Debug is on or not.
 pub fn is_debug() -> bool {
-    env::var("RUNNER_DEBUG")
+    std::env::var("RUNNER_DEBUG")
         .map(|v| v.trim() == "1")
         .unwrap_or(false)
 }
@@ -407,7 +514,10 @@ pub enum ValueError {
 #[derive(thiserror::Error, Debug)]
 pub enum FileCommandError {
     #[error("missing environment valirable for file command {cmd}")]
-    Missing { source: env::VarError, cmd: String },
+    Missing {
+        source: std::env::VarError,
+        cmd: String,
+    },
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -420,7 +530,7 @@ pub fn issue_file_command(
     message: impl AsRef<str>,
 ) -> Result<(), FileCommandError> {
     use std::io::Write;
-    let file_path = env::var(format!("GITHUB_{}", command.as_ref())).map_err(|source| {
+    let file_path = std::env::var(format!("GITHUB_{}", command.as_ref())).map_err(|source| {
         FileCommandError::Missing {
             source,
             cmd: command.as_ref().to_string(),
@@ -578,7 +688,7 @@ pub fn end_group() {
 
 /// Saves state for current action, the state can only be retrieved by this action's post job execution.
 pub fn save_state(name: String, value: impl std::fmt::Display) {
-    if let Ok(github_path) = env::var("GITHUB_STATE") {
+    if let Ok(github_path) = std::env::var("GITHUB_STATE") {
         let message = prepare_kv_message(&name, &value.to_string()).unwrap();
         issue_file_command("STATE", &message).unwrap();
         return;
@@ -593,7 +703,7 @@ pub fn save_state(name: String, value: impl std::fmt::Display) {
 
 /// Gets the value of an state set by this action's main execution.
 pub fn get_state(name: String) -> Option<String> {
-    env::var(format!("STATE_{}", name)).ok()
+    std::env::var(format!("STATE_{}", name)).ok()
 }
 
 /// Wrap an asynchronous function call in a group.
@@ -612,24 +722,39 @@ pub async fn group<T>(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    // use super::*;
+    use std::collections::HashMap;
 
     #[test]
-    fn test_get_input() {
-        use std::env::VarError;
+    fn test_get_empty_input() {
+        // use std::env::VarError;
 
         let input_name = "SOME_NAME";
-        let before = std::env::var(input_name);
-        std::env::set_var(input_name, "SET");
-        assert_eq!(get_input(input_name), Ok("SET".to_string()));
-
-        std::env::set_var(input_name, "");
+        let mut env: HashMap<String, String> =
+            HashMap::from_iter([(input_name.to_string(), "SET".to_string())]);
+        // let before = std::env::var(input_name);
+        // std::env::set_var(input_name, "SET");
         assert_eq!(
-            get_input(input_name),
-            Err(InputError::Missing(VarError::NotPresent))
+            super::get_input_from::<String>(&env, input_name),
+            Ok(Some("SET".to_string()))
         );
-        if let Ok(before) = before {
-            std::env::set_var(input_name, before);
-        }
+
+        // std::env::set_var(input_name, "");
+        env.insert(input_name.to_string(), "".to_string());
+        assert_eq!(
+            super::get_input_from::<String>(&env, input_name),
+            Ok(None),
+            // super::get_input_from(env, input_name),
+            //
+            // Err(std::env::VarError::NotPresent)
+        );
+
+        // assert_eq!(
+        //     get_input(input_name),
+        //     Err(InputError::Missing(VarError::NotPresent))
+        // );
+        // if let Ok(before) = before {
+        //     std::env::set_var(input_name, before);
+        // }
     }
 }

@@ -46,7 +46,6 @@ fn parse_action_yml(path: impl AsRef<Path>) -> Manifest {
     serde_yaml::from_reader(reader).unwrap()
 }
 
-
 fn resolve_path(path: impl AsRef<Path>) -> PathBuf {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()));
     if root.join(path.as_ref()).exists() {
@@ -115,6 +114,13 @@ fn str_to_ident(s: &str) -> syn::Ident {
     syn::Ident::new(&s, Span::call_site())
 }
 
+fn format_option<T: quote::ToTokens>(value: &Option<T>) -> TokenStream {
+    match value {
+        Some(v) => quote! { Some(#v) },
+        None => quote! { None },
+    }
+}
+
 fn get_attribute(attr: &syn::Attribute) -> String {
     match &attr.parse_meta().unwrap() {
         syn::Meta::NameValue(syn::MetaNameValue { lit, .. }) => match lit {
@@ -125,9 +131,9 @@ fn get_attribute(attr: &syn::Attribute) -> String {
     }
 }
 
-fn parse_derive(ast: syn::DeriveInput) -> (syn::Ident, syn::Generics, PathBuf) {
-    let name = ast.ident;
-    let generics = ast.generics;
+fn parse_derive(ast: &syn::DeriveInput) -> (&syn::Ident, &syn::Generics, PathBuf) {
+    let name = &ast.ident;
+    let generics = &ast.generics;
 
     let manifests: Vec<_> = ast
         .attrs
@@ -144,7 +150,16 @@ fn parse_derive(ast: syn::DeriveInput) -> (syn::Ident, syn::Generics, PathBuf) {
 #[proc_macro_derive(Action, attributes(action))]
 pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast: syn::DeriveInput = syn::parse2(input.into()).unwrap();
-    let (struct_name, generics, manifest) = parse_derive(ast);
+    let (struct_name, generics, manifest) = parse_derive(&ast);
+
+    // match &ast.data {
+    //     syn::Data::Struct(syn::DataStruct { fields, .. }) => {
+    //         if !fields.is_empty() {
+    //             panic!("Action can only be derived for empty structs")
+    //         }
+    //     },
+    //     _ => panic!("Action can only be derived for structs"),
+    // }
 
     let manifest = parse_action_yml(manifest);
     // dbg!(&manifest);
@@ -155,7 +170,6 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .iter()
         .map(|(name, _input)| {
             let fn_name = str_to_ident(&name);
-            // todo: could use _input here and map to our own input type with more info
             quote! {
                 pub fn #fn_name<T>() -> Result<Option<T>, <T as ::actions::ParseInput>::Error>
                 where T: ::actions::ParseInput {
@@ -165,29 +179,67 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         })
         .collect();
 
-    // let fields: Vec<_> = manifest
-    //     .inputs
-    //     .iter()
-    //     .map(|(name, input)| {
-    //         let Input { description, deprecation_message, r#default, required } = input;
-    //         quote! { 
-    //             (#name.to_string(), ::actions::Input {
-    //                 description: #description.clone(),
-    //                 deprecation_message: #deprecation_message.clone(),
-    //                 default: #r#default.clone(),
-    //                 requied: #required,
-    //             }) 
-    //         }
-    //     }).collect();
+    let input_enum = quote! { pub enum Test {} };
 
-    let Manifest { name, description, author, .. } = manifest;
+    let inputs: Vec<_> = manifest
+        .inputs
+        .iter()
+        .map(|(name, input)| {
+            let description = format_option(&input.description);
+            let deprecation_message = format_option(&input.deprecation_message);
+            let r#default = format_option(&input.default);
+            let required = format_option(&input.required);
+            quote! {
+                (#name, ::actions::Input {
+                    description: #description,
+                    deprecation_message: #deprecation_message,
+                    default: #r#default,
+                    required: #required,
+                })
+            }
+        })
+        .collect();
+    // eprintln!("{}", pretty_print(&quote! { vec![#(#inputs,)*]; }));
+
+    let parse_impl = quote! {
+        #[allow(clippy::all)]
+        impl #impl_generics ::actions::Parse for #struct_name #ty_generics #where_clause {
+            fn parse<E: ::actions::ReadEnv>(env: &E) -> std::collections::HashMap<String, Option<String>> {
+                Self::inputs().iter().map(|(name, input)| {
+                    let value = ::actions::get_input_from::<String>(env, name);
+                    let default = input.default.map(|s| s.to_string());
+                    (name.to_string(), value.unwrap().or(default))
+                }).collect()
+            }
+        }
+    };
+
+    let Manifest {
+        name,
+        description,
+        author,
+        ..
+    } = manifest;
 
     let input_impl = quote! {
         #[allow(clippy::all)]
         impl #impl_generics #struct_name #ty_generics #where_clause {
-            pub fn fields() -> ::std::collections::HashMap<String, ::actions::Input> {
-                vec![].into_iter().collect()
-                // vec![#(#fields)*].into_iter().collect()
+            /// Input names of this action.
+            // pub fn input_names() -> &'static [&'static str] {
+            //     static names: &'static [&'static str] = &[#(#input_names,)*];
+            //     &names
+            // }
+
+            /// Inputs of this action.
+            pub fn inputs() -> ::std::collections::HashMap<
+                &'static str, ::actions::Input<'static>
+            > {
+                static inputs: &'static [(&'static str, ::actions::Input<'static>)] = &[
+                    #(#inputs,)*
+                ];
+                inputs.iter().cloned().collect()
+                // vec![].into_iter().collect()
+                // vec![#(#fields,)*].into_iter().collect()
             }
 
             pub fn description() -> &'static str {
@@ -205,8 +257,13 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
             #derived_methods
         }
     };
-    eprintln!("{}", pretty_print(&input_impl));
-    input_impl.into()
+    let tokens = quote! {
+        #input_enum
+        #parse_impl
+        #input_impl
+    };
+    eprintln!("{}", pretty_print(&tokens));
+    tokens.into()
 }
 
 #[allow(dead_code)]

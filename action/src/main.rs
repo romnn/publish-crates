@@ -31,10 +31,22 @@ impl actions::ParseInput for Duration {
 
 #[derive(Action)]
 #[action = "../../action.yml"]
-pub struct PublishCratesAction {}
+pub struct PublishCratesAction {
+    _test: String,
+}
 
 async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
+
+    // static inputs: &'static [(&'static str, ::actions::Input)] = &[(
+    //     "test",
+    //     ::actions::Input {
+    //         description: None,
+    //         deprecation_message: None,
+    //         default: None,
+    //         required: None,
+    //     },
+    // )];
 
     // let action = ActionD { value: 0 };
     PublishCratesAction::description();
@@ -51,9 +63,8 @@ async fn run() -> eyre::Result<()> {
         // .map_or(Ok(None), |v| v)
         .map(PathBuf::from)
         .unwrap_or(cwd);
-        // .wrap_err("path is not specified")?;
+    // .wrap_err("path is not specified")?;
 
-    
     let registry_token = PublishCratesAction::registry_token::<String>()?;
     // let registry_token = actions::get_input::<String>("registry-token")?;
 
@@ -69,7 +80,8 @@ async fn run() -> eyre::Result<()> {
         // .ok()
         // .map(parse_duration)
         // .map_or(Ok(None), |v| v.map(Some))
-        .wrap_err("invalid value for publish-delay")?.map(std::time::Duration::from);
+        .wrap_err("invalid value for publish-delay")?
+        .map(std::time::Duration::from);
 
     let no_verify = actions::get_input::<bool>("no-verify")
         // .ok()
@@ -85,8 +97,8 @@ async fn run() -> eyre::Result<()> {
         .wrap_err("invalid value for option resolve-versions")?
         .unwrap_or(false);
 
-    actions::warning!("include: {:?}", actions::get_raw_input("include"));
-    actions::warning!("exclude: {:?}", actions::get_raw_input("exclude"));
+    actions::warning!("include: {:?}", actions::get_input::<String>("include"));
+    actions::warning!("exclude: {:?}", actions::get_input::<String>("exclude"));
 
     let options = Options {
         path,
@@ -111,22 +123,69 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use actions::ParseInput;
+    use super::PublishCratesAction ;
+    use actions::{Env, ReadEnv, ParseInput, Parse};
+    use anyhow::Result;
     use std::time::Duration;
+    use std::collections::HashMap;
+    use pretty_assertions::assert_eq;
 
     fn parse_duration(dur: impl Into<String>) -> Option<Duration> {
-        <super::Duration as ParseInput>::parse(dur.into()).ok().map(Into::into)
+        <super::Duration as ParseInput>::parse(dur.into())
+            .ok()
+            .map(Into::into)
     }
 
+    #[test]
+    fn test_common_config() -> Result<()> {
+        let env = Env::from_str("
+registry-token: test-token
+resolve-versions: true
+publish-delay: 30s")?;
+        // dbg!(&env);
+        // let config = PublishCratesAction::parse(&env);
+        // let env: HashMap<String, String> = HashMap::new();
+        let config = PublishCratesAction::parse(&env);
+        dbg!(&config);
+        // let resolve = actions::get_input_from::<bool>(&env, "resolve-versions");
+        // dbg!(&resolve);
+        // assert_eq!(resolve, Ok(Some(true)));
+        assert_eq!(config, HashMap::from_iter([
+//             ("extra-args": None),
+// <    ("token": Some(
+// <        "${{ github.token }}",
+// <    )),
+// <    ("path": Some(
+// <        ".",
+// <    )),
+// <    ("include": None),
+// <    ("exclude": None),
+// <    "registry-token": Some(
+// <        "test-token",
+// <    ),
+// <    "resolve-versions": Some(
+// <        "true",
+// <    ),
+// <    "publish-delay": Some(
+// <        "30s",
+// <    ),
+// <    "version": None,
+// <    "no-verify": Some(
+// <        "false",
+// <    ),
+// <    "dry-run": Some(
+// <        "false",
+// <    ),
+        ]));
+        // assert!(false);
+        Ok(())
+    }
 
     #[test]
     fn test_parse_duration() {
         assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
         assert_eq!(parse_duration("30S"), Some(Duration::from_secs(30)));
-        assert_eq!(
-            parse_duration("20m"),
-            Some(Duration::from_secs(20 * 60))
-        );
+        assert_eq!(parse_duration("20m"), Some(Duration::from_secs(20 * 60)));
         // todo: fix this?
         // assert_eq!(
         //     parse_duration_string("1m30s").ok(),
