@@ -1,7 +1,7 @@
-#![allow(warnings)]
+// #![allow(warnings)]
 
 use actions::Action;
-use color_eyre::eyre::{self, eyre, WrapErr};
+use color_eyre::eyre::{self, WrapErr};
 use publish_crates::{publish, Options};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -41,10 +41,6 @@ async fn run() -> eyre::Result<()> {
     let cwd = std::env::current_dir()?;
 
     let path = PublishCratesAction::path::<String>()?
-        .map(PathBuf::from)
-        .unwrap_or(cwd.clone());
-
-    let path = actions::get_input::<String>("path")?
         .map(PathBuf::from)
         .unwrap_or(cwd);
 
@@ -93,7 +89,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
-    use actions::{Env, Parse, ParseInput, ReadEnv};
+    use actions::{Env, Parse, ParseInput};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;

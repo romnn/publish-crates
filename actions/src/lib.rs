@@ -1,4 +1,4 @@
-#![allow(warnings)]
+// #![allow(warnings)]
 
 use std::collections::HashMap;
 use std::path::Path;
@@ -265,9 +265,9 @@ pub fn prepare_kv_message(key: &str, value: &str) -> Result<String, ValueError> 
 pub fn export_var(name: impl AsRef<str>, value: impl ToString) -> Result<(), ValueError> {
     std::env::set_var(name.as_ref(), value.to_string());
 
-    if let Ok(github_path) = std::env::var("GITHUB_ENV") {
+    if std::env::var("GITHUB_ENV").and_then(not_empty).is_ok() {
         let message = prepare_kv_message(name.as_ref(), &value.to_string())?;
-        issue_file_command("ENV", &message);
+        issue_file_command("ENV", &message).unwrap();
         return Ok(());
     }
 
@@ -300,8 +300,8 @@ pub fn append_to_path(path: impl AsRef<Path>) -> Result<(), std::env::JoinPathsE
 /// For this action and future actions.
 pub fn add_path(path: impl AsRef<Path>) -> Result<(), std::env::JoinPathsError> {
     let path_string = path.as_ref().to_string_lossy();
-    if let Ok(github_path) = std::env::var("GITHUB_PATH") {
-        issue_file_command("PATH", &path_string);
+    if std::env::var("GITHUB_PATH").and_then(not_empty).is_ok() {
+        issue_file_command("PATH", &path_string).unwrap();
     } else {
         issue(CommandBuilder::new("add-path", path_string).build());
     }
@@ -361,17 +361,20 @@ where
     }
 }
 
-/// Gets the raw value of an input.
-pub fn get_raw_input(
-    env: &impl ReadEnv,
-    name: impl AsRef<str>,
-) -> Result<String, std::env::VarError> {
-    let value = env.get(&input_env_var(name.as_ref()))?;
+pub fn not_empty(value: String) -> Result<String, std::env::VarError> {
     if value.is_empty() {
         Err(std::env::VarError::NotPresent)
     } else {
         Ok(value)
     }
+}
+
+/// Gets the raw value of an input.
+pub fn get_raw_input(
+    env: &impl ReadEnv,
+    name: impl AsRef<str>,
+) -> Result<String, std::env::VarError> {
+    env.get(&input_env_var(name.as_ref())).and_then(not_empty)
 }
 
 /// Gets the value of an input.
@@ -487,16 +490,16 @@ impl std::fmt::Display for Command {
         const CMD_STRING: &str = "::";
         write!(f, "{}{}", CMD_STRING, self.command)?;
         if !self.props.is_empty() {
-            write!(f, " ");
+            write!(f, " ")?;
         }
         for (i, (k, v)) in self.props.iter().enumerate() {
             if i > 0 {
-                write!(f, ",");
+                write!(f, ",")?;
             }
             if v.is_empty() {
                 continue;
             }
-            write!(f, "{k}={}", utils::escape_property(v));
+            write!(f, "{k}={}", utils::escape_property(v))?;
         }
         write!(f, "{}{}", CMD_STRING, self.message)
     }
@@ -689,7 +692,7 @@ pub fn end_group() {
 
 /// Saves state for current action, the state can only be retrieved by this action's post job execution.
 pub fn save_state(name: String, value: impl std::fmt::Display) {
-    if let Ok(github_path) = std::env::var("GITHUB_STATE") {
+    if std::env::var("GITHUB_STATE").and_then(not_empty).is_ok() {
         let message = prepare_kv_message(&name, &value.to_string()).unwrap();
         issue_file_command("STATE", &message).unwrap();
         return;
