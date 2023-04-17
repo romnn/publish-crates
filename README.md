@@ -1,5 +1,17 @@
 ## publish crates
 
+#### names
+- action-core
+- action-io
+- action-artifact
+- action-cache
+- action-exec
+- action-github
+- action-glob
+- action-http-client
+- action-tool-cache
+- action-derive
+
 #### TODO
 - verify the actions.yml and actions/main.rs line up
 - use only core logging in the lib

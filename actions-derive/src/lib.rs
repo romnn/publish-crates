@@ -1,50 +1,10 @@
 // #![allow(warnings)]
-use proc_macro2::{Span, TokenStream};
+mod ident;
+mod manifest;
+
+use proc_macro2::TokenStream;
 use quote::quote;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-
-#[derive(PartialEq, Eq, Hash, Debug, serde::Deserialize)]
-struct Input {
-    description: Option<String>,
-    #[serde(rename(deserialize = "deprecationMessage"))]
-    deprecation_message: Option<String>,
-    default: Option<String>,
-    required: Option<bool>,
-}
-
-#[derive(PartialEq, Eq, Hash, Debug, serde::Deserialize)]
-struct Output {
-    description: Option<String>,
-}
-
-#[derive(PartialEq, Eq, Hash, Debug, serde::Deserialize)]
-struct Branding {
-    icon: Option<String>,
-    color: Option<String>,
-}
-
-#[derive(PartialEq, Eq, Debug, serde::Deserialize)]
-struct Manifest {
-    name: Option<String>,
-    description: Option<String>,
-    author: Option<String>,
-    branding: Option<Branding>,
-
-    #[serde(default)]
-    inputs: HashMap<String, Input>,
-    #[serde(default)]
-    outputs: HashMap<String, Output>,
-}
-
-fn parse_action_yml(path: impl AsRef<Path>) -> Manifest {
-    let file = std::fs::OpenOptions::new()
-        .read(true)
-        .open(path.as_ref())
-        .unwrap();
-    let reader = std::io::BufReader::new(file);
-    serde_yaml::from_reader(reader).unwrap()
-}
 
 fn resolve_path(path: impl AsRef<Path>) -> PathBuf {
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".into()));
@@ -55,80 +15,7 @@ fn resolve_path(path: impl AsRef<Path>) -> PathBuf {
     }
 }
 
-fn replace_invalid_identifier_chars(s: &str) -> String {
-    s.strip_prefix('$')
-        .unwrap_or(s)
-        .replace(|c: char| !c.is_alphanumeric() && c != '_', "_")
-}
-
-fn replace_numeric_start(s: &str) -> String {
-    if s.chars().next().map(|c| c.is_numeric()).unwrap_or(false) {
-        format!("_{}", s)
-    } else {
-        s.to_string()
-    }
-}
-
-fn remove_excess_underscores(s: &str) -> String {
-    let mut result = String::new();
-    let mut char_iter = s.chars().peekable();
-
-    while let Some(c) = char_iter.next() {
-        let next_c = char_iter.peek();
-        if c != '_' || !matches!(next_c, Some('_')) {
-            result.push(c);
-        }
-    }
-
-    result
-}
-
-fn capitalize(s: &str) -> String {
-    let mut c = s.chars();
-    match c.next() {
-        None => String::new(),
-        Some(f) => f.to_uppercase().chain(c).collect(),
-    }
-}
-
-fn str_to_enum_variant(s: &str) -> syn::Ident {
-    let parts: Vec<_> = s.split([' ', '_', '-']).map(capitalize).collect();
-    str_to_ident(&parts.join(""))
-}
-
-fn str_to_ident(s: &str) -> syn::Ident {
-    if s.is_empty() {
-        return quote::format_ident!("empty_");
-        // return syn::Ident::new("empty_", Span::call_site());
-    }
-
-    if s.chars().all(|c| c == '_') {
-        return syn::Ident::new("underscore_", Span::call_site());
-    }
-
-    let s = replace_invalid_identifier_chars(s);
-    let s = replace_numeric_start(&s);
-    let s = remove_excess_underscores(&s);
-
-    if s.is_empty() {
-        return syn::Ident::new("invalid_", Span::call_site());
-    }
-
-    let keywords = [
-        "as", "break", "const", "continue", "crate", "else", "enum", "extern", "false", "fn",
-        "for", "if", "impl", "in", "let", "loop", "match", "mod", "move", "mut", "pub", "ref",
-        "return", "self", "static", "struct", "super", "trait", "true", "type", "unsafe", "use",
-        "where", "while", "abstract", "become", "box", "do", "final", "macro", "override", "priv",
-        "typeof", "unsized", "virtual", "yield", "async", "await", "try",
-    ];
-    if keywords.iter().any(|&keyword| keyword == s) {
-        return syn::Ident::new(&format!("{}_", s), Span::call_site());
-    }
-
-    syn::Ident::new(&s, Span::call_site())
-}
-
-fn format_option<T: quote::ToTokens>(value: &Option<T>) -> TokenStream {
+fn quote_option<T: quote::ToTokens>(value: &Option<T>) -> TokenStream {
     match value {
         Some(v) => quote! { Some(#v) },
         None => quote! { None },
@@ -164,7 +51,7 @@ fn parse_derive(ast: &syn::DeriveInput) -> (&syn::Ident, &syn::Generics, PathBuf
 #[proc_macro_derive(Action, attributes(action))]
 pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast: syn::DeriveInput = syn::parse2(input.into()).unwrap();
-    let (struct_name, generics, manifest) = parse_derive(&ast);
+    let (struct_name, generics, manifest_path) = parse_derive(&ast);
 
     // match &ast.data {
     //     syn::Data::Struct(syn::DataStruct { fields, .. }) => {
@@ -175,7 +62,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     //     _ => panic!("Action can only be derived for structs"),
     // }
 
-    let manifest = parse_action_yml(manifest);
+    let manifest = manifest::Manifest::from_action_yml(manifest_path);
     // dbg!(&manifest);
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -183,7 +70,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .inputs
         .iter()
         .map(|(name, _input)| {
-            let fn_name = str_to_ident(&name);
+            let fn_name = ident::str_to_ident(&name);
             quote! {
                 pub fn #fn_name<T>() -> Result<Option<T>, <T as ::actions::ParseInput>::Error>
                 where T: ::actions::ParseInput {
@@ -197,7 +84,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .inputs
         .iter()
         .map(|(name, _)| {
-            let variant = str_to_enum_variant(&name);
+            let variant = ident::str_to_enum_variant(&name);
             quote! { #variant }
         })
         .collect();
@@ -206,7 +93,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .inputs
         .iter()
         .map(|(name, _)| {
-            let variant = str_to_enum_variant(&name);
+            let variant = ident::str_to_enum_variant(&name);
             quote! { #name => Ok(Self::#variant) }
         })
         .collect();
@@ -234,10 +121,10 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         .inputs
         .iter()
         .map(|(name, input)| {
-            let description = format_option(&input.description);
-            let deprecation_message = format_option(&input.deprecation_message);
-            let r#default = format_option(&input.default);
-            let required = format_option(&input.required);
+            let description = quote_option(&input.description);
+            let deprecation_message = quote_option(&input.deprecation_message);
+            let r#default = quote_option(&input.default);
+            let required = quote_option(&input.required);
             quote! {
                 (#name, ::actions::Input {
                     description: #description,
@@ -268,7 +155,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         }
     };
 
-    let Manifest {
+    let manifest::Manifest {
         name,
         description,
         author,
