@@ -83,9 +83,23 @@ fn remove_excess_underscores(s: &str) -> String {
     result
 }
 
+fn capitalize(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().chain(c).collect(),
+    }
+}
+
+fn str_to_enum_variant(s: &str) -> syn::Ident {
+    let parts: Vec<_> = s.split([' ', '_', '-']).map(capitalize).collect();
+    str_to_ident(&parts.join(""))
+}
+
 fn str_to_ident(s: &str) -> syn::Ident {
     if s.is_empty() {
-        return syn::Ident::new("empty_", Span::call_site());
+        return quote::format_ident!("empty_");
+        // return syn::Ident::new("empty_", Span::call_site());
     }
 
     if s.chars().all(|c| c == '_') {
@@ -179,7 +193,42 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         })
         .collect();
 
-    let input_enum = quote! { pub enum Test {} };
+    let input_enum_variants: Vec<_> = manifest
+        .inputs
+        .iter()
+        .map(|(name, _)| {
+            let variant = str_to_enum_variant(&name);
+            quote! { #variant }
+        })
+        .collect();
+
+    let input_enum_matches: Vec<_> = manifest
+        .inputs
+        .iter()
+        .map(|(name, _)| {
+            let variant = str_to_enum_variant(&name);
+            quote! { #name => Ok(Self::#variant) }
+        })
+        .collect();
+
+    let input_enum_ident = quote::format_ident!("{}Input", struct_name);
+    let input_enum = quote! {
+        #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
+        pub enum #input_enum_ident {
+            #(#input_enum_variants,)*
+        }
+
+        impl std::str::FromStr for #input_enum_ident {
+            type Err = ();
+            fn from_str(input: &str) -> Result<Self, Self::Err> {
+                match input {
+                    #(#input_enum_matches,)*
+                    _  => Err(()),
+                }
+            }
+        }
+    };
+    // eprintln!("{}", pretty_print(&quote! { #input_enum }));
 
     let inputs: Vec<_> = manifest
         .inputs
@@ -204,11 +253,16 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let parse_impl = quote! {
         #[allow(clippy::all)]
         impl #impl_generics ::actions::Parse for #struct_name #ty_generics #where_clause {
-            fn parse<E: ::actions::ReadEnv>(env: &E) -> std::collections::HashMap<String, Option<String>> {
-                Self::inputs().iter().map(|(name, input)| {
+            type Input = #input_enum_ident;
+
+            fn parse<E: ::actions::ReadEnv>(env: &E) -> std::collections::HashMap<Self::Input, Option<String>> {
+                Self::inputs().iter().filter_map(|(name, input)| {
                     let value = ::actions::get_input_from::<String>(env, name);
                     let default = input.default.map(|s| s.to_string());
-                    (name.to_string(), value.unwrap().or(default))
+                    match std::str::FromStr::from_str(&name) {
+                        Ok(variant) => Some((variant, value.unwrap().or(default))),
+                        Err(_) => None,
+                    }
                 }).collect()
             }
         }
@@ -224,12 +278,6 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
     let input_impl = quote! {
         #[allow(clippy::all)]
         impl #impl_generics #struct_name #ty_generics #where_clause {
-            /// Input names of this action.
-            // pub fn input_names() -> &'static [&'static str] {
-            //     static names: &'static [&'static str] = &[#(#input_names,)*];
-            //     &names
-            // }
-
             /// Inputs of this action.
             pub fn inputs() -> ::std::collections::HashMap<
                 &'static str, ::actions::Input<'static>
@@ -238,18 +286,19 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
                     #(#inputs,)*
                 ];
                 inputs.iter().cloned().collect()
-                // vec![].into_iter().collect()
-                // vec![#(#fields,)*].into_iter().collect()
             }
 
+            /// Description of this action.
             pub fn description() -> &'static str {
                 #description
             }
 
+            /// Name of this action.
             pub fn name() -> &'static str {
                 #name
             }
 
+            /// Author of this trait.
             pub fn author() -> &'static str {
                 #author
             }
@@ -262,7 +311,7 @@ pub fn action_derive(input: proc_macro::TokenStream) -> proc_macro::TokenStream 
         #parse_impl
         #input_impl
     };
-    eprintln!("{}", pretty_print(&tokens));
+    // eprintln!("{}", pretty_print(&tokens));
     tokens.into()
 }
 

@@ -22,10 +22,10 @@ impl actions::ParseInput for Duration {
     type Error = InvalidDuration;
 
     fn parse(value: String) -> Result<Self, Self::Error> {
-        let duration = value.to_ascii_lowercase();
-        let duration = duration_string::DurationString::from_string(duration.clone())
-            .map_err(|_| InvalidDuration(duration))?;
-        Ok(Duration(duration.into()))
+        let dur = value.to_ascii_lowercase();
+        let dur = duration_string::DurationString::from_string(dur.clone())
+            .map_err(|_| InvalidDuration(dur))?;
+        Ok(Duration(dur.into()))
     }
 }
 
@@ -38,19 +38,6 @@ pub struct PublishCratesAction {
 async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
 
-    // static inputs: &'static [(&'static str, ::actions::Input)] = &[(
-    //     "test",
-    //     ::actions::Input {
-    //         description: None,
-    //         deprecation_message: None,
-    //         default: None,
-    //         required: None,
-    //     },
-    // )];
-
-    // let action = ActionD { value: 0 };
-    PublishCratesAction::description();
-
     let cwd = std::env::current_dir()?;
 
     let path = PublishCratesAction::path::<String>()?
@@ -58,47 +45,29 @@ async fn run() -> eyre::Result<()> {
         .unwrap_or(cwd.clone());
 
     let path = actions::get_input::<String>("path")?
-        // .transpose()
-        // .map(Result::ok);
-        // .map_or(Ok(None), |v| v)
         .map(PathBuf::from)
         .unwrap_or(cwd);
-    // .wrap_err("path is not specified")?;
 
     let registry_token = PublishCratesAction::registry_token::<String>()?;
-    // let registry_token = actions::get_input::<String>("registry-token")?;
 
-    // let dry_run = actions::get_input::<bool>("dry-run")
     let dry_run = PublishCratesAction::dry_run::<bool>()
-        // .ok()
-        // .map(parse_bool)
-        // .map_or(Ok(None), |v| v.map(Some))
         .wrap_err("invalid value for option dry-run")?
         .unwrap_or(false);
 
-    let publish_delay = actions::get_input::<Duration>("publish-delay")
-        // .ok()
-        // .map(parse_duration)
-        // .map_or(Ok(None), |v| v.map(Some))
+    let publish_delay = PublishCratesAction::publish_delay::<Duration>()
         .wrap_err("invalid value for publish-delay")?
         .map(std::time::Duration::from);
 
-    let no_verify = actions::get_input::<bool>("no-verify")
-        // .ok()
-        // .map(parse_bool)
-        // .map_or(Ok(None), |v| v.map(Some))
+    let no_verify = PublishCratesAction::no_verify::<bool>()
         .wrap_err("invalid value for option no-verify")?
         .unwrap_or(false);
 
-    let resolve_versions = actions::get_input::<bool>("resolve-versions")
-        // .ok()
-        // .map(parse_bool)
-        // .map_or(Ok(None), |v| v.map(Some))
+    let resolve_versions = PublishCratesAction::resolve_versions::<bool>()
         .wrap_err("invalid value for option resolve-versions")?
         .unwrap_or(false);
 
-    actions::warning!("include: {:?}", actions::get_input::<String>("include"));
-    actions::warning!("exclude: {:?}", actions::get_input::<String>("exclude"));
+    actions::info!("include: {:?}", actions::get_input::<String>("include"));
+    actions::info!("exclude: {:?}", actions::get_input::<String>("exclude"));
 
     let options = Options {
         path,
@@ -123,12 +92,12 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::PublishCratesAction ;
-    use actions::{Env, ReadEnv, ParseInput, Parse};
+    use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
+    use actions::{Env, Parse, ParseInput, ReadEnv};
     use anyhow::Result;
-    use std::time::Duration;
-    use std::collections::HashMap;
     use pretty_assertions::assert_eq;
+    use std::collections::HashMap;
+    use std::time::Duration;
 
     fn parse_duration(dur: impl Into<String>) -> Option<Duration> {
         <super::Duration as ParseInput>::parse(dur.into())
@@ -138,46 +107,33 @@ mod tests {
 
     #[test]
     fn test_common_config() -> Result<()> {
-        let env = Env::from_str("
+        let env = Env::from_str(
+            "
 registry-token: test-token
 resolve-versions: true
-publish-delay: 30s")?;
-        // dbg!(&env);
-        // let config = PublishCratesAction::parse(&env);
-        // let env: HashMap<String, String> = HashMap::new();
-        let config = PublishCratesAction::parse(&env);
+publish-delay: 30s",
+        )?;
+        let config = Action::parse(&env);
         dbg!(&config);
         // let resolve = actions::get_input_from::<bool>(&env, "resolve-versions");
         // dbg!(&resolve);
         // assert_eq!(resolve, Ok(Some(true)));
-        assert_eq!(config, HashMap::from_iter([
-//             ("extra-args": None),
-// <    ("token": Some(
-// <        "${{ github.token }}",
-// <    )),
-// <    ("path": Some(
-// <        ".",
-// <    )),
-// <    ("include": None),
-// <    ("exclude": None),
-// <    "registry-token": Some(
-// <        "test-token",
-// <    ),
-// <    "resolve-versions": Some(
-// <        "true",
-// <    ),
-// <    "publish-delay": Some(
-// <        "30s",
-// <    ),
-// <    "version": None,
-// <    "no-verify": Some(
-// <        "false",
-// <    ),
-// <    "dry-run": Some(
-// <        "false",
-// <    ),
-        ]));
-        // assert!(false);
+        assert_eq!(
+            config,
+            HashMap::from_iter([
+                (Input::Token, Some("${{ github.token }}".to_string())),
+                (Input::Version, None),
+                (Input::DryRun, Some("false".to_string())),
+                (Input::Path, Some(".".to_string())),
+                (Input::RegistryToken, Some("test-token".to_string())),
+                (Input::ExtraArgs, None),
+                (Input::ResolveVersions, Some("true".to_string())),
+                (Input::Include, None),
+                (Input::NoVerify, Some("false".to_string())),
+                (Input::Exclude, None),
+                (Input::PublishDelay, Some("30s".to_string())),
+            ])
+        );
         Ok(())
     }
 

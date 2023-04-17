@@ -310,7 +310,8 @@ pub fn add_path(path: impl AsRef<Path>) -> Result<(), std::env::JoinPathsError> 
 }
 
 pub trait Parse {
-    fn parse<E: ReadEnv>(env: &E) -> HashMap<String, Option<String>>;
+    type Input;
+    fn parse<E: ReadEnv>(env: &E) -> HashMap<Self::Input, Option<String>>;
 }
 
 pub trait ParseInput: Sized {
