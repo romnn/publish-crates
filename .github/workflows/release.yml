@@ -54,12 +54,9 @@ jobs:
       - uses: actions/checkout@v3
       - id: query
         uses: romnn/query-git-action@master
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: stable
-          profile: minimal
-          override: true
-          target: ${{ matrix.target.arch }}
+          targets: ${{ matrix.target.arch }}
 
       - name: Build target
         uses: actions-rs/cargo@v1
