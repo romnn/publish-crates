@@ -6,8 +6,7 @@ version = 3
 name = "action"
 version = "0.0.7"
 dependencies = [
- "actions",
- "actions-toolkit",
+ "action-core",
  "anyhow",
  "color-eyre",
  "duration-string",
@@ -18,45 +17,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "actions"
-version = "0.1.0"
+name = "action-core"
+version = "0.0.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bc3614a8f124aa89d67f04fddb156c0092e5baf8d5fd7fe272237a5f53fd5059"
 dependencies = [
- "actions-derive",
+ "action-derive",
  "serde",
  "serde_yaml",
  "thiserror",
- "uuid 1.3.1",
+ "uuid",
 ]
 
 [[package]]
-name = "actions-core"
-version = "0.0.2"
+name = "action-derive"
+version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d56cc5cfda7bee687c69222601afcaf356a4847554371dc04f17d26dd779e581"
+checksum = "f8540ac09adbfdf3071c7898ad2ac77231d578749f554304509c01e5c6774bc9"
 dependencies = [
- "uuid 0.8.2",
-]
-
-[[package]]
-name = "actions-derive"
-version = "0.1.0"
-dependencies = [
- "prettyplease",
  "proc-macro2",
  "quote",
  "serde",
  "serde_yaml",
  "syn 1.0.109",
-]
-
-[[package]]
-name = "actions-toolkit"
-version = "0.0.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3880744ccf39da2e9e6e8fc8ed36ee15105b22e4d9a0a4660ec3aaa850f9681"
-dependencies = [
- "actions-core",
- "uuid 0.8.2",
 ]
 
 [[package]]
@@ -660,9 +643,9 @@ checksum = "ad0a93d233ebf96623465aad4046a8d3aa4da22d4f4beba5388838c8a434bbb4"
 
 [[package]]
 name = "h2"
-version = "0.3.17"
+version = "0.3.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66b91535aa35fea1523ad1b86cb6b53c28e0ae566ba4a460f4457e936cad7c6f"
+checksum = "17f8a914c2987b688368b5138aa05321db91f4090cf26118185672ad588bce21"
 dependencies = [
  "bytes",
  "fnv",
@@ -1071,16 +1054,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prettyplease"
-version = "0.2.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1ceca8aaf45b5c46ec7ed39fff75f57290368c1846d33d24a122ca81416ab058"
-dependencies = [
- "proc-macro2",
- "syn 2.0.15",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.56"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1093,8 +1066,7 @@ dependencies = [
 name = "publish-crates"
 version = "0.0.7"
 dependencies = [
- "actions",
- "actions-toolkit",
+ "action-core",
  "async-process",
  "cargo_metadata",
  "color-eyre",
@@ -1624,15 +1596,6 @@ name = "utf8parse"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "711b9620af191e0cdc7468a8d14e709c3dcdb115b36f838e601583af800a370a"
-
-[[package]]
-name = "uuid"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
-dependencies = [
- "getrandom",
-]
 
 [[package]]
 name = "uuid"

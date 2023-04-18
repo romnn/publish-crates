@@ -1,6 +1,6 @@
 // #![allow(warnings)]
 
-use actions::Action;
+use action_core::{self as action, Action};
 use color_eyre::eyre::{self, WrapErr};
 use publish_crates::{publish, Options};
 use std::path::PathBuf;
@@ -18,7 +18,7 @@ impl From<Duration> for std::time::Duration {
 #[error("{0} is not a valid duraition")]
 pub struct InvalidDuration(String);
 
-impl actions::ParseInput for Duration {
+impl action::ParseInput for Duration {
     type Error = InvalidDuration;
 
     fn parse(value: String) -> Result<Self, Self::Error> {
@@ -31,9 +31,7 @@ impl actions::ParseInput for Duration {
 
 #[derive(Action)]
 #[action = "../../action.yml"]
-pub struct PublishCratesAction {
-    _test: String,
-}
+pub struct PublishCratesAction;
 
 async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -41,8 +39,7 @@ async fn run() -> eyre::Result<()> {
     let cwd = std::env::current_dir()?;
 
     let path = PublishCratesAction::path::<String>()?
-        .map(PathBuf::from)
-        .unwrap_or(cwd);
+        .map_or(cwd, PathBuf::from);
 
     let registry_token = PublishCratesAction::registry_token::<String>()?;
 
@@ -62,10 +59,10 @@ async fn run() -> eyre::Result<()> {
         .wrap_err("invalid value for option resolve-versions")?
         .unwrap_or(false);
 
-    actions::info!("include: {:?}", actions::get_input::<String>("include"));
-    actions::info!("exclude: {:?}", actions::get_input::<String>("exclude"));
+    action::info!("include: {:?}", PublishCratesAction::include::<String>());
+    action::info!("exclude: {:?}", PublishCratesAction::exclude::<String>());
 
-    let options = Options {
+    let options = Arc::new(Options {
         path,
         registry_token,
         dry_run,
@@ -74,25 +71,26 @@ async fn run() -> eyre::Result<()> {
         resolve_versions,
         include: None,
         exclude: None,
-    };
-    publish(Arc::new(options)).await?;
+    });
+    publish(options).await?;
     Ok(())
 }
 
 #[tokio::main]
 async fn main() {
     if let Err(err) = run().await {
-        actions::fail(err);
+        action::fail(err);
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
-    use actions::{Env, Parse, ParseInput};
+    use action_core::{self as action, Parse, ParseInput};
     use anyhow::Result;
     use pretty_assertions::assert_eq;
     use std::collections::HashMap;
+    use std::str::FromStr;
     use std::time::Duration;
 
     fn parse_duration(dur: impl Into<String>) -> Option<Duration> {
@@ -103,17 +101,14 @@ mod tests {
 
     #[test]
     fn test_common_config() -> Result<()> {
-        let env = Env::from_str(
+        let env = action::env::Env::from_str(
             "
 registry-token: test-token
 resolve-versions: true
 publish-delay: 30s",
         )?;
-        let config = Action::parse(&env);
+        let config = Action::parse_from(&env);
         dbg!(&config);
-        // let resolve = actions::get_input_from::<bool>(&env, "resolve-versions");
-        // dbg!(&resolve);
-        // assert_eq!(resolve, Ok(Some(true)));
         assert_eq!(
             config,
             HashMap::from_iter([

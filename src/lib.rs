@@ -1,14 +1,16 @@
 // #![allow(warnings)]
+#![allow(clippy::missing_panics_doc)]
 
-use actions_toolkit::prelude::*;
+use action_core as action;
 use cargo_metadata::DependencyKind;
 use color_eyre::eyre;
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use futures::Future;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
+use tokio::sync::Semaphore;
 use tokio::time::{interval, sleep, Duration, Instant};
 
 /// Options for publishing packages.
@@ -61,7 +63,7 @@ struct Package {
 
 impl std::fmt::Debug for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        write!(f, "{}", self)
+        write!(f, "{self}")
     }
 }
 
@@ -124,9 +126,8 @@ impl Package {
                 Ok(version) => Some((version, v)),
                 Err(_) => None,
             });
-        let version = match versions.find(|(ver, _)| ver == &self.package.version) {
-            Some((_, version)) => version,
-            None => return Ok(false),
+        let Some((_, version))= versions.find(|(ver, _)| ver == &self.package.version) else {
+            return Ok(false);
         };
 
         let client = reqwest::Client::new();
@@ -149,13 +150,10 @@ impl Package {
         let mut ticker = interval(Duration::from_secs(5));
         loop {
             ticker.tick().await;
-            log_message(
-                LogLevel::Warning,
-                format!(
-                    "checking if {} {} is available",
-                    self.package.name,
-                    self.package.version.to_string()
-                ),
+            action::info!(
+                "checking if {} {} is available",
+                self.package.name,
+                self.package.version.to_string()
             );
             if self.is_available().await? {
                 return Ok(());
@@ -176,10 +174,7 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        log_message(
-            LogLevel::Warning,
-            format!("publishing {}", self.package.name),
-        );
+        action::info!("publishing {}", self.package.name,);
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
@@ -207,20 +202,18 @@ impl Package {
         let output = cmd.output().await?;
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-        log_message(LogLevel::Debug, &stdout);
-        log_message(LogLevel::Debug, &stderr);
+        action::debug!("{}", &stdout);
+        action::debug!("{}", &stderr);
 
         if !output.status.success() {
             eyre::bail!("command {:?} failed: {}", cmd, stderr);
         }
 
         if options.dry_run {
-            log_message(
-                LogLevel::Warning,
-                format!(
-                    "dry-run: skipping waiting for {} {} to be published",
-                    &self.package.name, self.package.version
-                ),
+            action::info!(
+                "dry-run: skipping waiting for {} {} to be published",
+                &self.package.name,
+                self.package.version
             );
             *self.published.lock().unwrap() = true;
             return Ok(self);
@@ -245,95 +238,70 @@ impl Package {
         }
 
         *self.published.lock().unwrap() = true;
-        log_message(
-            LogLevel::Warning,
-            format!("published {}", self.package.name),
-        );
+        action::info!("published {}", self.package.name);
 
         Ok(self)
     }
 }
 
-pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
-    log_message(
-        LogLevel::Warning,
-        format!("searching cargo packages at {}", options.path.display()),
-    );
+type TaskFut = dyn Future<Output = eyre::Result<Arc<Package>>>;
 
-    let manifest_path = if options.path.is_file() {
-        options.path.clone()
-    } else {
-        options.path.join("Cargo.toml")
-    };
-    let metadata = cargo_metadata::MetadataCommand::new()
-        .manifest_path(&manifest_path)
-        .exec()?;
-
+fn find_packages(
+    metadata: &cargo_metadata::Metadata,
+    options: Arc<Options>,
+) -> impl Iterator<Item = (PathBuf, Arc<Package>)> + '_ {
     let packages = metadata.workspace_packages();
-    let packages: Arc<HashMap<PathBuf, Arc<Package>>> = Arc::new(
-        stream::iter(packages)
-            .filter_map(|package| {
-                let options = options.clone();
-                async move {
-                    if let Some(publish) = &package.publish {
-                        // publish = ["some-registry-name"]
-                        // The value may also be an array of strings
-                        // which are registry names that are allowed to be published to.
-                        if publish.is_empty() {
-                            // skip package
-                            log_message(
-                                LogLevel::Warning,
-                                format!("skipping: {} (publish=false)", package.name),
-                            );
-                            return None;
-                        }
-                    }
-                    if let Some(include) = &options.include {
-                        if include.len() > 0 {
-                            if !include.contains(&package.name) {
-                                // skip package
-                                log_message(
-                                    LogLevel::Warning,
-                                    format!("skipping: {} (not included)", package.name),
-                                );
-                                return None;
-                            }
-                        }
-                    }
-                    if let Some(exclude) = &options.exclude {
-                        if exclude.contains(&package.name) {
-                            // skip package
-                            log_message(
-                                LogLevel::Warning,
-                                format!("skipping: {} (excluded)", package.name),
-                            );
-                            return None;
-                        }
-                    }
-                    let path: PathBuf = package.manifest_path.parent().unwrap().into();
-                    Some((
-                        path.clone(),
-                        Arc::new(Package {
-                            package: package.clone(),
-                            path,
-                            published: Mutex::new(false),
-                            deps: RwLock::new(HashMap::new()),
-                            dependants: RwLock::new(HashMap::new()),
-                        }),
-                    ))
-                }
-            })
-            .collect()
-            .await,
-    );
+    packages.into_iter().filter_map(move |package| {
+        if let Some(publish) = &package.publish {
+            // publish = ["some-registry-name"]
+            // The value may also be an array of strings
+            // which are registry names that are allowed to be published to.
+            if publish.is_empty() {
+                // skip package
+                action::info!("skipping: {} (publish=false)", package.name);
+                return None;
+            }
+        }
+        if let Some(include) = &options.include {
+            if !include.is_empty() && !include.contains(&package.name) {
+                // skip package
+                action::info!("skipping: {} (not included)", package.name);
+                return None;
+            }
+        }
+        if let Some(exclude) = &options.exclude {
+            if exclude.contains(&package.name) {
+                // skip package
+                action::info!("skipping: {} (excluded)", package.name);
+                return None;
+            }
+        }
+        let path: PathBuf = package.manifest_path.parent()?.into();
+        Some((
+            path.clone(),
+            Arc::new(Package {
+                package: package.clone(),
+                path,
+                published: Mutex::new(false),
+                deps: RwLock::new(HashMap::new()),
+                dependants: RwLock::new(HashMap::new()),
+            }),
+        ))
+    })
+}
 
+async fn build_dag(
+    packages: Arc<HashMap<PathBuf, Arc<Package>>>,
+    options: Arc<Options>,
+) -> eyre::Result<()> {
     let results: Vec<_> = stream::iter(packages.values())
         .map(|p| {
             let packages = packages.clone();
             let options = options.clone();
             async move {
                 use toml_edit::{value, Document};
-                let manifest = tokio::fs::read_to_string(&p.package.manifest_path).await?;
+                let manifest_path = &p.package.manifest_path;
+                let manifest = tokio::fs::read_to_string(manifest_path).await?;
                 let mut manifest = manifest.parse::<Document>()?;
                 let mut need_update = false;
 
@@ -341,7 +309,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                     let mut dep_version = dep.req.clone();
                     if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
                         // also if the version is set, we want to resolve automatically?
-                        // OR we allow chaning and always set allow-dirty
+                        // OR we allow changing and always set allow-dirty
                         // dep_version == semver::VersionReq::STAR &&
                         let resolved = packages.get(&path).ok_or(eyre::eyre!(
                             "could not resolve local dependency {}",
@@ -373,7 +341,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                                         value(dep_version.to_string());
                                     manifest[kind][&dep.name]
                                         .as_inline_table_mut()
-                                        .map(|t| t.fmt());
+                                        .map(toml_edit::InlineTable::fmt);
                                     need_update = true;
                                 }
                             }
@@ -391,23 +359,18 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                             .insert(p.package.name.clone(), p.clone());
                     }
 
-                    if dep_version == semver::VersionReq::STAR {
-                        if dep.kind != DependencyKind::Development {
-                            eyre::bail!("dependency {} is missing version field", &dep.name);
-                        } else if dep.path.is_none() {
-                            eyre::bail!("dependency {} is missing version field", &dep.name);
-                        }
+                    if dep_version == semver::VersionReq::STAR
+                        && (dep.kind != DependencyKind::Development || dep.path.is_none())
+                    {
+                        eyre::bail!("dependency {} is missing version field", &dep.name);
                     }
                 }
 
                 // write updated cargo manifest
                 if need_update {
-                    log_message(LogLevel::Warning, &manifest.to_string());
-                    log_message(
-                        LogLevel::Warning,
-                        format!("updating {}", &p.package.manifest_path),
-                    );
                     use tokio::io::AsyncWriteExt;
+                    action::debug!("{}", &manifest.to_string());
+                    action::warning!("updating {}", &p.package.manifest_path);
                     let mut f = tokio::fs::OpenOptions::new()
                         .write(true)
                         .truncate(true)
@@ -425,27 +388,47 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
 
     // fail on error
     results.into_iter().collect::<eyre::Result<Vec<_>>>()?;
+    Ok(())
+}
 
-    // println!("{:#?}", &packages);
-    log_message(
-        LogLevel::Warning,
-        format!(
-            "found packages: {:?}",
-            packages
-                .values()
-                .map(|p| p.package.name.clone())
-                .collect::<Vec<_>>()
-        ),
+/// Publishes packages of a project on crates.io.
+///
+/// # Errors
+/// If any package cannot be published.
+pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
+    action::info!("searching cargo packages at {}", options.path.display());
+
+    let manifest_path = if options.path.is_file() {
+        options.path.clone()
+    } else {
+        options.path.join("Cargo.toml")
+    };
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .manifest_path(&manifest_path)
+        .exec()?;
+
+    let packages: Arc<HashMap<PathBuf, Arc<Package>>> =
+        Arc::new(find_packages(&metadata, options.clone()).collect::<HashMap<_, _>>());
+
+    build_dag(packages.clone(), options.clone()).await?;
+
+    action::info!(
+        "found packages: {:?}",
+        packages
+            .values()
+            .map(|p| p.package.name.clone())
+            .collect::<Vec<_>>()
     );
 
     if packages.is_empty() {
         // fast path: nothing to do here
         return Ok(());
     }
-    let mut ready: Vec<Arc<Package>> = packages.values().filter(|p| p.ready()).cloned().collect();
+    let mut ready: VecDeque<Arc<Package>> =
+        packages.values().filter(|p| p.ready()).cloned().collect();
 
-    type TaskFut = dyn Future<Output = eyre::Result<Arc<Package>>>;
     let mut tasks: FuturesUnordered<Pin<Box<TaskFut>>> = FuturesUnordered::new();
+    let limit = Arc::new(Semaphore::new(5));
 
     loop {
         // check if we are done
@@ -454,9 +437,24 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         }
 
         // start running ready tasks
-        for p in ready.drain(0..) {
-            let options_clone = options.clone();
-            tasks.push(Box::pin(async move { p.publish(options_clone).await }));
+        loop {
+            let Ok(permit) = limit.clone().try_acquire_owned() else {
+                break;
+            };
+            // tokio::sync::TryAcquireError::NoPermits
+
+            // check if we can publish
+            match ready.pop_front() {
+                Some(p) => {
+                    let options_clone = options.clone();
+                    tasks.push(Box::pin(async move {
+                        let res = p.publish(options_clone).await;
+                        drop(permit);
+                        res
+                    }));
+                }
+                None => break,
+            }
         }
 
         // wait for a task to complete

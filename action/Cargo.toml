@@ -14,8 +14,7 @@ publish-crates = { path = "../" }
 duration-string = "0"
 tokio = { version = "1", features = ["full"] }
 color-eyre = "0"
-actions-toolkit = "0"
-actions = { path = "../actions", features = ["derive", "serde"] }
+action-core = { version = "0", features = ["derive", "serde"] }
 
 [dev-dependencies]
 anyhow = "1"

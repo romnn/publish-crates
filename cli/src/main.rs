@@ -37,31 +37,29 @@ struct Options {
     #[clap(long = "exclude")]
     exclude: Option<Vec<String>>,
 }
-
-impl Into<publish::Options> for Options {
-    fn into(self) -> publish::Options {
-        let working_dir = PathBuf::from(std::env::current_dir().unwrap());
-        let path = self
-            .path
-            .as_ref()
-            .map(|p| {
+impl From<Options> for publish::Options {
+    fn from(options: Options) -> Self {
+        let working_dir = std::env::current_dir().unwrap();
+        let path = options.path.as_ref().map_or_else(
+            || working_dir.join("Cargo.toml"),
+            |p| {
                 if p.is_file() {
                     p.clone()
                 } else {
                     p.join("Cargo.toml")
                 }
-            })
-            .unwrap_or_else(|| working_dir.join("Cargo.toml"));
+            },
+        );
 
         publish::Options {
             path,
-            registry_token: self.registry_token,
-            dry_run: self.dry_run,
-            publish_delay: self.publish_delay.into(),
-            no_verify: self.no_verify,
-            resolve_versions: self.resolve_versions,
-            include: self.include,
-            exclude: self.exclude,
+            registry_token: options.registry_token,
+            dry_run: options.dry_run,
+            publish_delay: options.publish_delay,
+            no_verify: options.no_verify,
+            resolve_versions: options.resolve_versions,
+            include: options.include,
+            exclude: options.exclude,
         }
     }
 }
