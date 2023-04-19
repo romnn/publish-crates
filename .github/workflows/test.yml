@@ -36,6 +36,6 @@ jobs:
       - name: Publish (dry-run)
         run: cargo run -p cargo-publish-crates
         env:
-          RESOLVE-VERSIONS: true
-          DRY-RUN: true
-          NO-VERIFY: true
+          RESOLVE_VERSIONS: true
+          DRY_RUN: true
+          NO_VERIFY: true
