@@ -191,9 +191,9 @@ impl Package {
             cmd.arg("--dry-run");
             // skip checking if local package versions are available on crates.io as they are not
             // published during dry-run
-            if !self.deps.read().unwrap().is_empty() {
-                cmd.arg("--offline");
-            }
+            // if !self.deps.read().unwrap().is_empty() {
+            //     cmd.arg("--offline");
+            // }
         }
         if options.resolve_versions {
             // when resolving versions, we may write to Cargo.toml
