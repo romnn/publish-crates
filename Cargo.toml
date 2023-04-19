@@ -14,7 +14,7 @@ categories = [
   "development-tools",
 ]
 keywords = [
-  "crates.io",
+  "crates-io",
   "ci-cd",
   "publish",
   "cli",
