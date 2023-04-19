@@ -191,9 +191,17 @@ impl Package {
             cmd.arg("--dry-run");
             // skip checking if local package versions are available on crates.io as they are not
             // published during dry-run
-            // if !self.deps.read().unwrap().is_empty() {
-            //     cmd.arg("--offline");
-            // }
+            if options.resolve_versions && !self.deps.read().unwrap().is_empty() {
+                // cmd.arg("--offline");
+                // skip cargo dry-run as it will always fail
+                action::info!(
+                    "dry-run: proceed without `cargo publish --dry-run` for {} {} due to resolve version incompatibility",
+                    &self.package.name,
+                    self.package.version
+                );
+                *self.published.lock().unwrap() = true;
+                return Ok(self);
+            }
         }
         if options.resolve_versions {
             // when resolving versions, we may write to Cargo.toml
