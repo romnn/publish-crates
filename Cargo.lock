@@ -3,20 +3,6 @@
 version = 3
 
 [[package]]
-name = "action"
-version = "0.0.8"
-dependencies = [
- "action-core",
- "anyhow",
- "color-eyre",
- "duration-string",
- "pretty_assertions 0.7.2",
- "publish-crates",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "action-core"
 version = "0.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1078,6 +1064,20 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml_edit",
+]
+
+[[package]]
+name = "publish-crates-action"
+version = "0.0.8"
+dependencies = [
+ "action-core",
+ "anyhow",
+ "color-eyre",
+ "duration-string",
+ "pretty_assertions 0.7.2",
+ "publish-crates",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

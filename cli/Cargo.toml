@@ -2,7 +2,7 @@
 name = "cargo-publish-crates"
 version = "0.0.8"
 edition = "2021"
-publish = false
+publish = true
 
 [[bin]]
 name = "cargo-publish-crates"

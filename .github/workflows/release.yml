@@ -7,7 +7,22 @@ on:
       - "*"
 
 jobs:
+  tests:
+    uses: ./.github/workflows/test.yml
+
+  publish-crate:
+    needs: [tests]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: katyo/publish-crates@v1
+        with:
+          registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
   release-binaries:
+    needs: [tests]
     runs-on: ${{ matrix.target.os }}
     name: build ${{ matrix.bin.name }} (${{ matrix.target.arch }})
     strategy: 
@@ -15,7 +30,9 @@ jobs:
       matrix:
         bin:
           - name: publish-crates-action
-            package: action
+            package: publish-crates-action
+          - name: cargo-publish-crates
+            package: cargo-publish-crates
         target:
           # linux aarch64 
           - os: ubuntu-latest
