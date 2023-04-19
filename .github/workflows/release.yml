@@ -21,9 +21,9 @@ jobs:
       - name: Publish
         run: cargo run -p cargo-publish-crates
         env:
-          REGISTRY-TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          RESOLVE-VERSIONS: true
-          PUBLISH-DELAY: 30s
+          REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          RESOLVE_VERSIONS: true
+          PUBLISH_DELAY: 30s
   
   release-binaries:
     needs: [tests]
