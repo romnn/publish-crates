@@ -3,6 +3,23 @@ name = "publish-crates"
 version = "0.0.10"
 edition = "2021"
 publish = true
+authors = ["romnn <contact@romnn.com>"]
+description = "Publish rust crates with support for cargo workspaces"
+license-file = "../LICENSE"
+readme = "../README.md"
+documentation = "https://docs.rs/publish-crates"
+homepage = "https://github.com/romnn/publish-crates"
+repository = "https://github.com/romnn/publish-crates"
+categories = [
+  "development-tools",
+]
+keywords = [
+  "crates.io",
+  "ci-cd",
+  "publish",
+  "cli",
+]
+exclude = []
 
 [workspace]
 members = [

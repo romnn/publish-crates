@@ -28,15 +28,17 @@ jobs:
   release-binaries:
     needs: [tests]
     runs-on: ${{ matrix.target.os }}
-    name: build ${{ matrix.bin.name }} (${{ matrix.target.arch }})
+    name: build ${{ matrix.bin.short_name }} (${{ matrix.target.arch }})
     strategy: 
       fail-fast: false
       matrix:
         bin:
           - name: publish-crates-action
             package: publish-crates-action
+            short_name: action
           - name: cargo-publish-crates
             package: cargo-publish-crates
+            short_name: cli
         target:
           # linux aarch64 
           - os: ubuntu-latest
