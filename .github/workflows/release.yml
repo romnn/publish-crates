@@ -9,10 +9,13 @@ on:
 jobs:
   release-binaries:
     runs-on: ${{ matrix.target.os }}
-    name: build release (${{ matrix.target.arch }})
+    name: build ${{ matrix.bin.name }} (${{ matrix.target.arch }})
     strategy: 
       fail-fast: false
       matrix:
+        bin:
+          - name: publish-crates-action
+            package: action
         target:
           # linux aarch64 
           - os: ubuntu-latest
@@ -65,7 +68,8 @@ jobs:
           command: build
           args: >-
             --release
-            --package action
+            --bin ${{ matrix.bin.name }}
+            --package ${{ matrix.bin.package }}
             --target ${{ matrix.target.arch }}
 
       - name: Create package dir
@@ -79,12 +83,12 @@ jobs:
           -C 
           ./target/${{ matrix.target.arch }}/release
           -czvf
-          ./publish/publish-crates-action-${{ matrix.target.arch }}.tar.gz
-          publish-crates-action
+          ./publish/${{ matrix.bin.name }}-${{ matrix.target.arch }}.tar.gz
+          ${{ matrix.bin.name }}
 
       - name: List packages
         shell: bash
-        run: ls -lia ./publish
+        run: ls -liah ./publish
 
       - name: Upload release binaries
         uses: svenstaro/upload-release-action@v2
