@@ -20,21 +20,25 @@ fn parse_duration_string(duration: &str) -> eyre::Result<Duration> {
     author = "romnn <contact@romnn.com>",
 )]
 struct Options {
-    #[clap(short = 'p', long = "path")]
+    #[clap(short = 'p', long = "path", env = "CRATE_PATH")]
     path: Option<PathBuf>,
-    #[clap(long = "registry-token")]
+    #[clap(long = "registry-token", env = "REGISTRY_TOKEN")]
     registry_token: Option<String>,
-    #[clap(long = "dry-run")]
+    #[clap(long = "dry-run", env = "DRY_RUN")]
     dry_run: bool,
-    #[clap(long = "publish-delay", value_parser = parse_duration_string)]
+    #[clap(
+        long = "publish-delay",
+        env = "PUBLISH_DELAY",
+        value_parser = parse_duration_string,
+    )]
     publish_delay: Option<Duration>,
-    #[clap(long = "no-verify")]
+    #[clap(long = "no-verify", env = "NO_VERIFY")]
     no_verify: bool,
-    #[clap(long = "resolve-versions")]
+    #[clap(long = "resolve-versions", env = "RESOLVE_VERSIONS")]
     resolve_versions: bool,
-    #[clap(long = "include")]
+    #[clap(long = "include", env = "INCLUDE_PACKAGES")]
     include: Option<Vec<String>>,
-    #[clap(long = "exclude")]
+    #[clap(long = "exclude", env = "EXCLUDE_PACKAGES")]
     exclude: Option<Vec<String>>,
 }
 impl From<Options> for publish::Options {
@@ -69,6 +73,6 @@ async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     let options: publish::Options = Options::parse().into();
-    publish::publish(Arc::new(options)).await.unwrap();
+    publish::publish(Arc::new(options)).await?;
     Ok(())
 }

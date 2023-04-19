@@ -312,7 +312,8 @@ async fn build_dag(
                         // OR we allow changing and always set allow-dirty
                         // dep_version == semver::VersionReq::STAR &&
                         let resolved = packages.get(&path).ok_or(eyre::eyre!(
-                            "could not resolve local dependency {}",
+                            "{}: could not resolve local dependency {}",
+                            &p.package.name,
                             path.display()
                         ))?;
                         if options.resolve_versions {
@@ -362,7 +363,11 @@ async fn build_dag(
                     if dep_version == semver::VersionReq::STAR
                         && (dep.kind != DependencyKind::Development || dep.path.is_none())
                     {
-                        eyre::bail!("dependency {} is missing version field", &dep.name);
+                        eyre::bail!(
+                            "{}: dependency {} is missing version field",
+                            &p.package.name,
+                            &dep.name
+                        );
                     }
                 }
 
@@ -370,7 +375,7 @@ async fn build_dag(
                 if need_update {
                     use tokio::io::AsyncWriteExt;
                     action::debug!("{}", &manifest.to_string());
-                    action::warning!("updating {}", &p.package.manifest_path);
+                    action::warning!("{}: updating {}", &p.package.name, &p.package.manifest_path);
                     let mut f = tokio::fs::OpenOptions::new()
                         .write(true)
                         .truncate(true)
