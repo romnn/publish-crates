@@ -16,4 +16,4 @@ jobs:
           INPUT_VERSION: latest
           INPUT_NO-VERIFY: true
           INPUT_DRY-RUN: true
-        run: cargo run -p action
+        run: cargo run -p publish-crates-action
