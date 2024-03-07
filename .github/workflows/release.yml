@@ -10,7 +10,7 @@ jobs:
     needs: [tests]
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       # publish ourselves
       - name: Publish
@@ -70,7 +70,7 @@ jobs:
           - os: windows-latest
             arch: i686-pc-windows-msvc
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
       - id: query
         uses: romnn/query-git-action@main
       - uses: dtolnay/rust-toolchain@stable
@@ -89,7 +89,7 @@ jobs:
       - name: Package
         shell: bash
         run: >-
-          tar -C  ./target/${{ matrix.target.arch }}/release -czvf ./publish/${{ matrix.bin.name }}-${{ matrix.target.arch }}.tar.gz ${{ matrix.bin.name }}
+          tar -C ./target/${{ matrix.target.arch }}/release -czvf ./publish/${{ matrix.bin.name }}-${{ matrix.target.arch }}.tar.gz ${{ matrix.bin.name }}
       - name: List packages
         shell: bash
         run: ls -liah ./publish
@@ -98,7 +98,7 @@ jobs:
         with:
           repo_token: ${{ secrets.GITHUB_TOKEN }}
           file: publish/*
-          tag: ${{ steps.query.outputs.stable_semver_version }}
-          release_name: ${{ steps.query.outputs.stable_semver_version }}
+          tag: ${{ steps.query.outputs.semver_version }}
+          release_name: ${{ steps.query.outputs.semver_version }}
           overwrite: true
           file_glob: true
