@@ -1,9 +1,8 @@
-// #![allow(warnings)]
 #![allow(clippy::missing_panics_doc)]
 
 use action_core as action;
 use cargo_metadata::DependencyKind;
-use color_eyre::eyre;
+use color_eyre::{eyre, Section};
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use futures::Future;
 use std::collections::{HashMap, VecDeque};
@@ -54,8 +53,9 @@ pub struct Options {
 
 /// A cargo package.
 struct Package {
-    package: cargo_metadata::Package,
+    inner: cargo_metadata::Package,
     path: PathBuf,
+    should_publish: bool,
     published: Mutex<bool>,
     deps: RwLock<HashMap<String, Arc<Package>>>,
     dependants: RwLock<HashMap<String, Arc<Package>>>,
@@ -70,8 +70,8 @@ impl std::fmt::Debug for Package {
 impl std::fmt::Display for Package {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.debug_struct("Package")
-            .field("name", &self.package.name)
-            .field("version", &self.package.version.to_string())
+            .field("name", &self.inner.name)
+            .field("version", &self.inner.version.to_string())
             .field(
                 "deps",
                 &self.deps.read().unwrap().keys().collect::<Vec<_>>(),
@@ -83,12 +83,6 @@ impl std::fmt::Display for Package {
             .finish()
     }
 }
-
-// #[derive(thiserror::Error, Debug)]
-// enum WaitForPackageError {
-//     #[error("timeout waiting for create to be published")]
-//     Timeout,
-// }
 
 impl Package {
     /// Returns `true` if the package has been successfully published.
@@ -113,7 +107,7 @@ impl Package {
             std::time::Duration::from_millis(1000),
         )?;
 
-        let info = match api.get_crate(&self.package.name).await {
+        let info = match api.get_crate(&self.inner.name).await {
             Ok(info) => info,
             Err(RegistryError::NotFound(_)) => return Ok(false),
             Err(err) => return Err(err.into()),
@@ -126,7 +120,7 @@ impl Package {
                 Ok(version) => Some((version, v)),
                 Err(_) => None,
             });
-        let Some((_, version))= versions.find(|(ver, _)| ver == &self.package.version) else {
+        let Some((_, version))= versions.find(|(ver, _)| ver == &self.inner.version) else {
             return Ok(false);
         };
 
@@ -152,8 +146,8 @@ impl Package {
             ticker.tick().await;
             action::info!(
                 "checking if {} {} is available",
-                self.package.name,
-                self.package.version.to_string()
+                self.inner.name,
+                self.inner.version.to_string()
             );
             if self.is_available().await? {
                 return Ok(());
@@ -163,8 +157,8 @@ impl Package {
                 eyre::bail!(
                     "exceeded timeout of {:?} waiting for crate {} {} to be published",
                     timeout,
-                    self.package.name,
-                    self.package.version.to_string()
+                    self.inner.name,
+                    self.inner.version.to_string()
                 );
             }
         }
@@ -174,11 +168,10 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        action::info!("publishing {}", self.package.name,);
+        action::info!("publishing {}", self.inner.name,);
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
-        // cmd.args(options.args);
 
         if options.no_verify {
             cmd.arg("--no-verify");
@@ -196,8 +189,8 @@ impl Package {
                 // skip cargo dry-run as it will always fail
                 action::info!(
                     "dry-run: proceed without `cargo publish --dry-run` for {} {} due to resolve version incompatibility",
-                    &self.package.name,
-                    self.package.version
+                    &self.inner.name,
+                    self.inner.version
                 );
                 *self.published.lock().unwrap() = true;
                 return Ok(self);
@@ -220,8 +213,8 @@ impl Package {
         if options.dry_run {
             action::info!(
                 "dry-run: skipping waiting for {} {} to be published",
-                &self.package.name,
-                self.package.version
+                &self.inner.name,
+                self.inner.version
             );
             *self.published.lock().unwrap() = true;
             return Ok(self);
@@ -246,7 +239,7 @@ impl Package {
         }
 
         *self.published.lock().unwrap() = true;
-        action::info!("published {}", self.package.name);
+        action::info!("published {}", self.inner.name);
 
         Ok(self)
     }
@@ -260,36 +253,27 @@ fn find_packages(
 ) -> impl Iterator<Item = (PathBuf, Arc<Package>)> + '_ {
     let packages = metadata.workspace_packages();
     packages.into_iter().filter_map(move |package| {
-        if let Some(publish) = &package.publish {
-            // publish = ["some-registry-name"]
-            // The value may also be an array of strings
-            // which are registry names that are allowed to be published to.
-            if publish.is_empty() {
-                // skip package
-                action::info!("skipping: {} (publish=false)", package.name);
-                return None;
-            }
-        }
-        if let Some(include) = &options.include {
-            if !include.is_empty() && !include.contains(&package.name) {
-                // skip package
-                action::info!("skipping: {} (not included)", package.name);
-                return None;
-            }
-        }
-        if let Some(exclude) = &options.exclude {
-            if exclude.contains(&package.name) {
-                // skip package
-                action::info!("skipping: {} (excluded)", package.name);
-                return None;
-            }
-        }
+        let should_publish = package.publish.as_ref().map_or(true, |p| !p.is_empty());
+
+        let is_included = options
+            .include
+            .as_ref()
+            .map_or(true, |inc| inc.is_empty() || inc.contains(&package.name));
+
+        let is_excluded = options
+            .exclude
+            .as_ref()
+            .is_some_and(|excl| excl.contains(&package.name));
+
+        let should_publish = should_publish && is_included && !is_excluded;
+
         let path: PathBuf = package.manifest_path.parent()?.into();
         Some((
             path.clone(),
             Arc::new(Package {
-                package: package.clone(),
+                inner: package.clone(),
                 path,
+                should_publish,
                 published: Mutex::new(false),
                 deps: RwLock::new(HashMap::new()),
                 dependants: RwLock::new(HashMap::new()),
@@ -302,18 +286,19 @@ async fn build_dag(
     packages: Arc<HashMap<PathBuf, Arc<Package>>>,
     options: Arc<Options>,
 ) -> eyre::Result<()> {
-    let results: Vec<_> = stream::iter(packages.values())
+    let packages_iter = packages.values().filter(|p| p.should_publish);
+    let results: Vec<_> = stream::iter(packages_iter)
         .map(|p| {
             let packages = packages.clone();
             let options = options.clone();
             async move {
                 use toml_edit::{value, Document};
-                let manifest_path = &p.package.manifest_path;
+                let manifest_path = &p.inner.manifest_path;
                 let manifest = tokio::fs::read_to_string(manifest_path).await?;
                 let mut manifest = manifest.parse::<Document>()?;
                 let mut need_update = false;
 
-                for dep in &p.package.dependencies {
+                for dep in &p.inner.dependencies {
                     let mut dep_version = dep.req.clone();
                     if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
                         // also if the version is set, we want to resolve automatically?
@@ -321,17 +306,29 @@ async fn build_dag(
                         // dep_version == semver::VersionReq::STAR &&
                         let resolved = packages.get(&path).ok_or(eyre::eyre!(
                             "{}: could not resolve local dependency {}",
-                            &p.package.name,
+                            &p.inner.name,
                             path.display()
                         ))?;
+
+                        // ensure that all local dependencies for a package
+                        // that should be published are also going to
+                        // be published
+                        if !resolved.should_publish {
+                            eyre::bail!(
+                                "{}: cannot publish because dependency {} will not be published",
+                                &p.inner.name,
+                                &dep.name,
+                            );
+                        }
+
                         if options.resolve_versions {
                             // use version from the manifest the path points to
                             dep_version = semver::VersionReq {
                                 comparators: vec![semver::Comparator {
                                     op: semver::Op::Exact,
-                                    major: resolved.package.version.major,
-                                    minor: Some(resolved.package.version.minor),
-                                    patch: Some(resolved.package.version.patch),
+                                    major: resolved.inner.version.major,
+                                    minor: Some(resolved.inner.version.minor),
+                                    patch: Some(resolved.inner.version.patch),
                                     pre: semver::Prerelease::EMPTY,
                                 }],
                             };
@@ -359,35 +356,36 @@ async fn build_dag(
                         p.deps
                             .write()
                             .unwrap()
-                            .insert(resolved.package.name.clone(), resolved.clone());
+                            .insert(resolved.inner.name.clone(), resolved.clone());
 
                         resolved
                             .dependants
                             .write()
                             .unwrap()
-                            .insert(p.package.name.clone(), p.clone());
+                            .insert(p.inner.name.clone(), p.clone());
                     }
 
                     if dep_version == semver::VersionReq::STAR
                         && (dep.kind != DependencyKind::Development || dep.path.is_none())
                     {
-                        eyre::bail!(
-                            "{}: dependency {} is missing version field",
-                            &p.package.name,
-                            &dep.name
-                        );
+                        return Err(eyre::eyre!(
+                            "{}: dependency {} is has no specific version ({})",
+                            &p.inner.name,
+                            &dep.name,
+                            dep_version
+                        ).suggestion("to automatically resolve versions of local workspace members, use '--resolve-versions'"));
                     }
                 }
 
                 // write updated cargo manifest
-                if need_update {
+                if !options.dry_run && need_update {
                     use tokio::io::AsyncWriteExt;
                     action::debug!("{}", &manifest.to_string());
-                    action::warning!("{}: updating {}", &p.package.name, &p.package.manifest_path);
+                    action::warning!("{}: updating {}", &p.inner.name, &p.inner.manifest_path);
                     let mut f = tokio::fs::OpenOptions::new()
                         .write(true)
                         .truncate(true)
-                        .open(&p.package.manifest_path)
+                        .open(&p.inner.manifest_path)
                         .await?;
                     f.write_all(manifest.to_string().as_bytes()).await?;
                 }
@@ -429,7 +427,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         "found packages: {:?}",
         packages
             .values()
-            .map(|p| p.package.name.clone())
+            .map(|p| p.inner.name.clone())
             .collect::<Vec<_>>()
     );
 
@@ -454,10 +452,11 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
             let Ok(permit) = limit.clone().try_acquire_owned() else {
                 break;
             };
-            // tokio::sync::TryAcquireError::NoPermits
-
             // check if we can publish
             match ready.pop_front() {
+                Some(p) if !p.should_publish => {
+                    action::info!("skipping: {} (publish=false)", p.inner.name);
+                }
                 Some(p) => {
                     let options_clone = options.clone();
                     tasks.push(Box::pin(async move {
@@ -466,6 +465,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                         res
                     }));
                 }
+                // no more tasks
                 None => break,
             }
         }
@@ -491,7 +491,10 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         }
     }
 
-    if !packages.values().all(|p| p.published()) {
+    if !packages
+        .values()
+        .all(|p| !p.should_publish || p.published())
+    {
         eyre::bail!("not all published");
     }
 
