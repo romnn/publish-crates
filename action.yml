@@ -23,15 +23,15 @@ inputs:
     description: Cargo registry token (e.g. crates.io)
   dry-run:
     description: This will perform all checks without publishing the package
-    default: 'false'
+    default: "false"
   publish-delay:
     description: Delay before attempting to publish dependent crate
   no-verify:
     description: Disable pre-publish validation checks
-    default: 'false'
+    default: "false"
   resolve-versions:
     description: Resolve missing versions for local packages
-    default: 'false'
+    default: "false"
 runs:
-  using: node16
+  using: node20
   main: dist/index.js
