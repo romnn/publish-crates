@@ -1,0 +1,32 @@
+[package]
+name = "publish-crates-action"
+publish = false
+
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "publish-crates-action"
+path = "src/main.rs"
+
+[dependencies]
+color-eyre.workspace = true
+thiserror.workspace = true
+
+# parsing
+duration-string = "0"
+
+# github actions
+action-core = { version = "0", features = ["derive", "serde"] }
+
+# async runtime
+tokio = { version = "1", features = ["full"] }
+
+publish-crates = { path = "../publish-crates/" }
+
+[dev-dependencies]
+similar-asserts.workspace = true

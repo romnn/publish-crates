@@ -2,15 +2,15 @@
 
 use action_core as action;
 use cargo_metadata::DependencyKind;
-use color_eyre::{eyre, Section};
-use futures::stream::{self, FuturesUnordered, StreamExt};
+use color_eyre::{Section, eyre};
 use futures::Future;
+use futures::stream::{self, FuturesUnordered, StreamExt};
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::Semaphore;
-use tokio::time::{interval, sleep, Duration, Instant};
+use tokio::time::{Duration, Instant, interval, sleep};
 
 /// Options for publishing packages.
 #[derive(Debug)]
@@ -120,7 +120,7 @@ impl Package {
                 Ok(version) => Some((version, v)),
                 Err(_) => None,
             });
-        let Some((_, version))= versions.find(|(ver, _)| ver == &self.inner.version) else {
+        let Some((_, version)) = versions.find(|(ver, _)| ver == &self.inner.version) else {
             return Ok(false);
         };
 
@@ -292,10 +292,10 @@ async fn build_dag(
             let packages = packages.clone();
             let options = options.clone();
             async move {
-                use toml_edit::{value, Document};
+                use toml_edit::{value, DocumentMut};
                 let manifest_path = &p.inner.manifest_path;
                 let manifest = tokio::fs::read_to_string(manifest_path).await?;
-                let mut manifest = manifest.parse::<Document>()?;
+                let mut manifest = manifest.parse::<DocumentMut>()?;
                 let mut need_update = false;
 
                 for dep in &p.inner.dependencies {

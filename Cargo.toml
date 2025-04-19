@@ -1,55 +1,39 @@
-[package]
-name = "publish-crates"
+[workspace]
+resolver = "2"
+members = [
+  "crates/*",
+]
+
+[workspace.package]
 version = "0.0.17"
-edition = "2021"
-publish = true
+edition = "2024"
 authors = ["romnn <contact@romnn.com>"]
 description = "Publish rust crates with support for cargo workspaces"
-license-file = "./LICENSE"
-readme = "./README.md"
-documentation = "https://docs.rs/publish-crates"
 homepage = "https://github.com/romnn/publish-crates"
 repository = "https://github.com/romnn/publish-crates"
-categories = [
-  "development-tools",
-]
-keywords = [
-  "crates-io",
-  "ci-cd",
-  "publish",
-  "cli",
-]
-exclude = []
+# categories = [
+#   "development-tools",
+# ]
+# keywords = [
+#   "crates-io",
+#   "ci-cd",
+#   "publish",
+#   "cli",
+# ]
+# exclude = []
 
-[workspace]
-members = [
-  "action",
-  "cli",
-]
-
-[profile.dev]
-opt-level = 0
-debug = 1
-
-# Optimize for size
 [profile.release]
-lto = true
-strip = true
 codegen-units = 1
 opt-level = 'z'
+lto = true
+strip = true
 
-[dependencies]
-semver = "1"
-cargo_metadata = "0"
-toml_edit = "0"
-futures = "0.3"
-tokio = { version = "1", features = ["full"] }
-async-process = "1"
+[workspace.dependencies]
 color-eyre = "0"
-thiserror = "1"
-crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
-reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
+thiserror = "2"
+
+# github actions
 action-core = "0"
 
-[dev-dependencies]
-pretty_assertions = "1"
+# testing
+similar-asserts = "1"

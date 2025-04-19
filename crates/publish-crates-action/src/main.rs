@@ -1,8 +1,6 @@
-// #![allow(warnings)]
-
 use action_core::{self as action, Action};
 use color_eyre::eyre::{self, WrapErr};
-use publish_crates::{publish, Options};
+use publish_crates::{Options, publish};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -38,8 +36,7 @@ async fn run() -> eyre::Result<()> {
 
     let cwd = std::env::current_dir()?;
 
-    let path = PublishCratesAction::path::<String>()?
-        .map_or(cwd, PathBuf::from);
+    let path = PublishCratesAction::path::<String>()?.map_or(cwd, PathBuf::from);
 
     let registry_token = PublishCratesAction::registry_token::<String>()?;
 
@@ -87,8 +84,7 @@ async fn main() {
 mod tests {
     use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
     use action_core::{self as action, Parse, ParseInput};
-    use anyhow::Result;
-    use pretty_assertions::assert_eq;
+    use color_eyre::eyre;
     use std::collections::HashMap;
     use std::str::FromStr;
     use std::time::Duration;
@@ -100,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn test_common_config() -> Result<()> {
+    fn test_common_config() -> eyre::Result<()> {
         let env = action::env::Env::from_str(
             "
 registry-token: test-token

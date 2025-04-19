@@ -1,5 +1,8 @@
 /target
+/goreleaser-dist
 /node_modules
 /tmp
 /act
 /*.tar.gz
+
+.intentionally-empty-file.o

@@ -33,5 +33,24 @@ inputs:
     description: Resolve missing versions for local packages
     default: "false"
 runs:
-  using: node20
-  main: dist/index.js
+  using: "composite"
+  steps:
+    - name: Install publish-crates-action
+      uses: romnn/action-release-download@main
+      with:
+        version: "latest"
+        repo: romnn/publish-crates-action
+        # prettier-ignore
+        assets: |
+          - >-
+            *publish-crates-action-*
+            {{~#switch platform ~}}
+              {{~#case "win32"~}}windows{{~/case~}}
+              {{~#default~}}{{~platform~}}{{~/default~}}
+            {{~/switch~}}
+            _
+            {{~#switch arch ~}}
+            {{~#case "x64"~}}amd64{{~/case~}}
+            {{~#default~}}{{~arch~}}{{~/default~}}
+            {{~/switch~}}
+            *

@@ -1,0 +1,46 @@
+[package]
+name = "publish-crates"
+license-file = "../../LICENSE"
+readme = "../../README.md"
+documentation = "https://docs.rs/publish-crates"
+publish = true
+
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+description.workspace = true
+homepage.workspace = true
+repository.workspace = true
+categories = [
+  "development-tools",
+]
+keywords = [
+  "crates-io",
+  "ci-cd",
+  "publish",
+  "cli",
+]
+exclude = []
+
+[dependencies]
+color-eyre.workspace = true
+thiserror.workspace = true
+
+# github actions
+action-core = "0"
+
+semver = "1"
+cargo_metadata = "0"
+toml_edit = "0"
+
+# async runtime
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+async-process = "2"
+
+# cargo api
+crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
+reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
+
+[dev-dependencies]
+similar-asserts.workspace = true
