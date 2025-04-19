@@ -54,3 +54,6 @@ runs:
             {{~#default~}}{{~arch~}}{{~/default~}}
             {{~/switch~}}
             *
+    - name: Publish crates
+      shell: bash
+      run: publish-crates-action
