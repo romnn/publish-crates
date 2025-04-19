@@ -47,7 +47,10 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
       - uses: Homebrew/actions/setup-homebrew@master
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install zig and goreleaser
-        run: brew install zig goreleaser
+      - name: Install dependencies
+        run: |
+          sudo apt install mingw-w64
+          brew install zig
+          brew install goreleaser
       - name: Release (dry-run)
         run: task build:goreleaser
