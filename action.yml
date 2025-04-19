@@ -57,3 +57,15 @@ runs:
     - name: Publish crates
       shell: bash
       run: publish-crates-action
+      env:
+        INPUT_version: ${{ inputs.version }}
+        INPUT_token: ${{ inputs.token }}
+        INPUT_path: ${{ inputs.path }}
+        INPUT_include: ${{ inputs.include }}
+        INPUT_exclude: ${{ inputs.exclude }}
+        INPUT_extra-args: ${{ inputs.extra-args }}
+        INPUT_registry-token: ${{ inputs.registry-token }}
+        INPUT_dry-run: ${{ inputs.dry-run }}
+        INPUT_publish-delay: ${{ inputs.publish-delay }}
+        INPUT_no-verify: ${{ inputs.no-verify }}
+        INPUT_resolve-versions: ${{ inputs.resolve-versions }}
