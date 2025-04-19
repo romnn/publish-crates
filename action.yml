@@ -43,7 +43,7 @@ runs:
         # prettier-ignore
         assets: |
           - >-
-            *publish-crates-action-*
+            *publish-crates-action*
             {{~#switch platform ~}}
               {{~#case "win32"~}}windows{{~/case~}}
               {{~#default~}}{{~platform~}}{{~/default~}}
