@@ -253,12 +253,12 @@ fn find_packages(
 ) -> impl Iterator<Item = (PathBuf, Arc<Package>)> + '_ {
     let packages = metadata.workspace_packages();
     packages.into_iter().filter_map(move |package| {
-        let should_publish = package.publish.as_ref().map_or(true, |p| !p.is_empty());
+        let should_publish = package.publish.as_ref().is_none_or(|p| !p.is_empty());
 
         let is_included = options
             .include
             .as_ref()
-            .map_or(true, |inc| inc.is_empty() || inc.contains(&package.name));
+            .is_none_or(|inc| inc.is_empty() || inc.contains(&package.name));
 
         let is_excluded = options
             .exclude

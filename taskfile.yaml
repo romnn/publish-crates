@@ -5,13 +5,39 @@ tasks:
     cmds:
       - task: run
 
+  run:
+    desc: "run cargo-publish-crates"
+    ignore_error: true
+    interactive: true
+    cmds:
+      - cargo run --bin cargo-publish-crates -- {{.CLI_ARGS}}
+
+  action:run:
+    desc: "run publish-crates-action"
+    ignore_error: true
+    interactive: true
+    cmds:
+      - cargo run --bin publish-crates-action -- {{.CLI_ARGS}}
+
   build:
+    desc: "build in debug mode"
     cmds:
       - cargo build --all-targets {{.CLI_ARGS}}
 
   build:release:
+    desc: "build in release mode"
     cmds:
       - cargo build --all-targets --release {{.CLI_ARGS}}
+
+  build:goreleaser:
+    desc: "build in release mode using goreleaser"
+    cmds:
+      - goreleaser build --snapshot --clean
+
+  release:
+    desc: "release using goreleaser"
+    cmds:
+      - goreleaser release --clean
 
   typos:
     desc: "check repository for typos"
@@ -32,6 +58,7 @@ tasks:
       - cargo fc check --workspace --all-targets {{.CLI_ARGS}}
 
   clean:
+    desc: "clean cargo workspace"
     cmds:
       - cargo clean {{.CLI_ARGS}}
 
@@ -84,7 +111,7 @@ tasks:
         -- -Dclippy::all -Dclippy::pedantic
 
   lint:fc:
-    desc: "lint cargo workspace for feature combinations"
+    desc: "lint cargo workspace for all combinations of features"
     cmds:
       # prettier-ignore
       - >-
