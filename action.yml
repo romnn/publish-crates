@@ -58,14 +58,14 @@ runs:
       shell: bash
       run: publish-crates-action
       env:
-        INPUT_version: ${{ inputs.version }}
-        INPUT_token: ${{ inputs.token }}
-        INPUT_path: ${{ inputs.path }}
-        INPUT_include: ${{ inputs.include }}
-        INPUT_exclude: ${{ inputs.exclude }}
-        INPUT_extra-args: ${{ inputs.extra-args }}
-        INPUT_registry-token: ${{ inputs.registry-token }}
-        INPUT_dry-run: ${{ inputs.dry-run }}
-        INPUT_publish-delay: ${{ inputs.publish-delay }}
-        INPUT_no-verify: ${{ inputs.no-verify }}
-        INPUT_resolve-versions: ${{ inputs.resolve-versions }}
+        INPUT_VERSION: ${{ inputs.version }}
+        INPUT_TOKEN: ${{ inputs.token }}
+        INPUT_PATH: ${{ inputs.path }}
+        INPUT_INCLUDE: ${{ inputs.include }}
+        INPUT_EXCLUDE: ${{ inputs.exclude }}
+        INPUT_EXTRA-ARGS: ${{ inputs.extra-args }}
+        INPUT_REGISTRY-TOKEN: ${{ inputs.registry-token }}
+        INPUT_DRY-RUN: ${{ inputs.dry-run }}
+        INPUT_PUBLISH-DELAY: ${{ inputs.publish-delay }}
+        INPUT_NO-VERIFY: ${{ inputs.no-verify }}
+        INPUT_RESOLVE-VERSIONS: ${{ inputs.resolve-versions }}

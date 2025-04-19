@@ -369,7 +369,7 @@ async fn build_dag(
                         && (dep.kind != DependencyKind::Development || dep.path.is_none())
                     {
                         return Err(eyre::eyre!(
-                            "{}: dependency {} is has no specific version ({})",
+                            "{}: dependency {} has no specific version ({})",
                             &p.inner.name,
                             &dep.name,
                             dep_version
