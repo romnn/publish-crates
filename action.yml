@@ -39,7 +39,7 @@ runs:
       uses: romnn/action-release-download@main
       with:
         version: "latest"
-        repo: romnn/publish-crates-action
+        repo: romnn/publish-crates
         # prettier-ignore
         assets: |
           - >-
