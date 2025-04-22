@@ -42,8 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Publish crates (dry-run)
+      # bootstrap: publish ourselves
+      - name: Publish (dry-run)
         run: cargo run -p cargo-publish-crates
         env:
-          RESOLVE_VERSIONS: true
-          DRY_RUN: true
+          PUBLISH_CRATES_RESOLVE_VERSIONS: true
+          PUBLISH_CRATES_DRY_RUN: true

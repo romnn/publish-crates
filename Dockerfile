@@ -10,9 +10,9 @@ RUN set -eux; \
       *) exit 1;; \
     esac; \
     ls -liah /tmp/goreleaser-dist/ \
-    && cp /tmp/goreleaser-dist/publish-crates_${RUST_TARGET_TRIPLE}/publish-crates \
-	/usr/bin/publish-crates
+    && cp /tmp/goreleaser-dist/cargo-publish-crates_${RUST_TARGET_TRIPLE}/cargo-publish-crates \
+	/usr/bin/cargo-publish-crates
 
 FROM scratch
-COPY --from=package /usr/bin/publish-crates /usr/local/bin/publish-crates
-ENTRYPOINT ["/usr/local/bin/publish-crates"]
+COPY --from=package /usr/bin/cargo-publish-crates /usr/local/bin/cargo-publish-crates
+ENTRYPOINT ["/usr/local/bin/cargo-publish-crates"]

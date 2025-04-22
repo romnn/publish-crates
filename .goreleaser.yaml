@@ -30,12 +30,18 @@ builds:
   - id: "cargo-publish-crates"
     builder: rust
     binary: cargo-publish-crates
+    # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
     targets:
+      # linux
       - x86_64-unknown-linux-gnu
-      - x86_64-apple-darwin
-      - x86_64-pc-windows-gnu
+      - x86_64-unknown-linux-musl
       - aarch64-unknown-linux-gnu
+      - aarch64-unknown-linux-musl
+      # macos
+      - x86_64-apple-darwin
       - aarch64-apple-darwin
+      # windows
+      - x86_64-pc-windows-gnu
     dir: ./
     tool: cargo
     command: zigbuild
@@ -49,12 +55,18 @@ builds:
   - id: "publish-crates-action"
     builder: rust
     binary: publish-crates-action
+    # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
     targets:
+      # linux
       - x86_64-unknown-linux-gnu
-      - x86_64-apple-darwin
-      - x86_64-pc-windows-gnu
+      - x86_64-unknown-linux-musl
       - aarch64-unknown-linux-gnu
+      - aarch64-unknown-linux-musl
+      # macos
+      - x86_64-apple-darwin
       - aarch64-apple-darwin
+      # windows
+      - x86_64-pc-windows-gnu
     dir: ./
     tool: cargo
     command: zigbuild

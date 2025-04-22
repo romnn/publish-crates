@@ -17,13 +17,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      # publish ourselves
+      # bootstrap: publish ourselves
       - name: Publish
         run: cargo run -p cargo-publish-crates
         env:
-          REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-          RESOLVE_VERSIONS: true
-          PUBLISH_DELAY: 30s
+          PUBLISH_CRATES_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+          PUBLISH_CRATES_RESOLVE_VERSIONS: true
+          PUBLISH_CRATES_PUBLISH_DELAY: 30s
 
   release:
     runs-on: ubuntu-24.04
