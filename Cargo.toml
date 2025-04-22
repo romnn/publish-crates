@@ -6,7 +6,7 @@ members = [
 
 
 [workspace.package]
-version = "0.0.21"
+version = "0.0.22"
 edition = "2024"
 authors = ["romnn <contact@romnn.com>"]
 description = "Publish rust crates with support for cargo workspaces"
