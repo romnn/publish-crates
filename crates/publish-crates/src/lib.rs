@@ -10,6 +10,9 @@ use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::Semaphore;
 use tokio::time::{Duration, Instant, interval, sleep};
 
+const DATETIME_FORMAT: &'static [time::format_description::BorrowedFormatItem<'static>] =
+    time::macros::format_description!("[hour]:[minute]:[second]");
+
 /// Options for publishing packages.
 #[derive(Debug)]
 pub struct Options {
@@ -276,11 +279,14 @@ impl Package {
                     eyre::bail!("command {:?} failed: {}", cmd, stderr);
                 }
 
-                let next_attempt = Instant::now() + wait_duration;
+                let next_attempt = std::time::SystemTime::now() + wait_duration;
                 action::warning!(
-                    "[{}@{}] attempting again in {wait_duration:?} at {next_attempt:?}",
+                    "[{}@{}] attempting again in {wait_duration:?} at {}",
                     self.inner.name,
-                    self.inner.version
+                    self.inner.version,
+                    time::OffsetDateTime::from(next_attempt)
+                        .format(DATETIME_FORMAT)
+                        .unwrap_or_else(|_| humantime::format_rfc3339(next_attempt).to_string())
                 );
                 sleep(wait_duration).await;
             } else {

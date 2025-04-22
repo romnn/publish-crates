@@ -33,6 +33,10 @@ semver = "1"
 cargo_metadata = "0"
 toml_edit = "0"
 
+# pretty print time
+time = { version = "0", features = ["formatting", "std", "macros"] }
+humantime = "2"
+
 # async runtime
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
