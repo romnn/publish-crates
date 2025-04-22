@@ -1,5 +1,3 @@
-#![allow(clippy::missing_panics_doc)]
-
 use action_core as action;
 use cargo_metadata::DependencyKind;
 use color_eyre::{Section, eyre};
@@ -213,8 +211,17 @@ impl Package {
 
         let max_retries = options.max_retries.unwrap_or(10);
         let mut attempt = 0;
+
         loop {
             attempt += 1;
+
+            action::warning!(
+                "[{}@{}] publishing (attempt {}/{})",
+                self.inner.name,
+                self.inner.version,
+                attempt,
+                max_retries
+            );
 
             let output = cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -281,8 +288,9 @@ impl Package {
                     eyre::bail!("command {:?} failed: {}", cmd, stderr);
                 }
 
+                let next_attempt = Instant::now() + wait_duration;
                 action::warning!(
-                    "[{}@{}] attempting again in {wait_duration:?}",
+                    "[{}@{}] attempting again in {wait_duration:?} at {next_attempt:?}",
                     self.inner.name,
                     self.inner.version
                 );
@@ -333,10 +341,10 @@ impl Package {
 
 type TaskFut = dyn Future<Output = eyre::Result<Arc<Package>>>;
 
-fn find_packages(
+fn find_packages<'a>(
     metadata: &cargo_metadata::Metadata,
-    options: Arc<Options>,
-) -> impl Iterator<Item = (PathBuf, Arc<Package>)> + '_ {
+    options: &'a Options,
+) -> impl Iterator<Item = (PathBuf, Arc<Package>)> {
     let packages = metadata.workspace_packages();
     packages.into_iter().filter_map(move |package| {
         let should_publish = package.publish.as_ref().is_none_or(|p| !p.is_empty());
@@ -369,118 +377,113 @@ fn find_packages(
 }
 
 async fn build_dag(
-    packages: Arc<HashMap<PathBuf, Arc<Package>>>,
-    options: Arc<Options>,
+    packages: &HashMap<PathBuf, Arc<Package>>,
+    options: &Options,
 ) -> eyre::Result<()> {
     let packages_iter = packages.values().filter(|p| p.should_publish);
     let results: Vec<_> = stream::iter(packages_iter)
-        .map(|p| {
-            let packages = packages.clone();
-            let options = options.clone();
-            async move {
-                use toml_edit::{value, DocumentMut};
-                let manifest_path = &p.inner.manifest_path;
-                let manifest = tokio::fs::read_to_string(manifest_path).await?;
-                let mut manifest = manifest.parse::<DocumentMut>()?;
-                let mut need_update = false;
+        .map(|p| async move {
+            use toml_edit::{value, DocumentMut};
+            let manifest_path = &p.inner.manifest_path;
+            let manifest = tokio::fs::read_to_string(manifest_path).await?;
+            let mut manifest = manifest.parse::<DocumentMut>()?;
+            let mut need_update = false;
 
-                for dep in &p.inner.dependencies {
-                    // dbg!(&dep);
-                    let mut dep_version = dep.req.clone();
-                    if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
-                        // also if the version is set, we want to resolve automatically?
-                        // OR we allow changing and always set allow-dirty
-                        // dep_version == semver::VersionReq::STAR &&
-                        let resolved = packages.get(&path).ok_or(eyre::eyre!(
-                            "{}: could not resolve local dependency {}",
-                            &p.inner.name,
-                            path.display()
-                        ))?;
+            for dep in &p.inner.dependencies {
+                let mut dep_version = dep.req.clone();
+                if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
+                    // also if the version is set, we want to resolve automatically?
+                    // OR we allow changing and always set allow-dirty
+                    // dep_version == semver::VersionReq::STAR &&
+                    let resolved = packages.get(&path).ok_or(eyre::eyre!(
+                        "{}: could not resolve local dependency {}",
+                        &p.inner.name,
+                        path.display()
+                    ))?;
 
-                        // ensure that all local dependencies for a package
-                        // that should be published are also going to
-                        // be published
-                        if !resolved.should_publish {
-                            eyre::bail!(
-                                "{}: cannot publish because dependency {} will not be published",
-                                &p.inner.name,
-                                &dep.name,
-                            );
-                        }
-
-                        if options.resolve_versions {
-                            // use version from the manifest the path points to
-                            dep_version = semver::VersionReq {
-                                comparators: vec![semver::Comparator {
-                                    op: semver::Op::Exact,
-                                    major: resolved.inner.version.major,
-                                    minor: Some(resolved.inner.version.minor),
-                                    patch: Some(resolved.inner.version.patch),
-                                    pre: semver::Prerelease::EMPTY,
-                                }],
-                            };
-
-                            let changed = dep_version != dep.req;
-                            if changed {
-                                // update cargo manifest
-                                if let Some(kind) = match dep.kind {
-                                    DependencyKind::Normal => Some("dependencies"),
-                                    DependencyKind::Development => Some("dev-dependencies"),
-                                    DependencyKind::Build => Some("build-dependencies"),
-                                    _ => None,
-                                } {
-                                    // TODO: !!!! do not remove the path thing here!
-                                    manifest[kind][&dep.name]["version"] =
-                                        value(dep_version.to_string());
-                                    manifest[kind][&dep.name]
-                                        .as_inline_table_mut()
-                                        .map(toml_edit::InlineTable::fmt);
-                                    need_update = true;
-                                }
-                            }
-                        }
-
-                        p.deps
-                            .write()
-                            .unwrap()
-                            .insert(resolved.inner.name.clone(), resolved.clone());
-
-                        resolved
-                            .dependants
-                            .write()
-                            .unwrap()
-                            .insert(p.inner.name.clone(), p.clone());
-                    }
-
-                    let is_dev_dep = dep.kind == DependencyKind::Development;
-                    let is_non_local_dep = !is_dev_dep || dep.path.is_none();
-                    let is_missing_exact_version = dep_version == semver::VersionReq::STAR;
-
-                    if is_missing_exact_version && is_non_local_dep {
-                        return Err(eyre::eyre!(
-                            "{}: dependency {} has no specific version ({})",
+                    // ensure that all local dependencies for a package
+                    // that should be published are also going to
+                    // be published
+                    if !resolved.should_publish {
+                        eyre::bail!(
+                            "{}: cannot publish because dependency {} will not be published",
                             &p.inner.name,
                             &dep.name,
-                            dep_version
-                        ).suggestion("to automatically resolve versions of local workspace members, use '--resolve-versions'"));
+                        );
                     }
+
+                    if options.resolve_versions {
+                        // use version from the manifest the path points to
+                        dep_version = semver::VersionReq {
+                            comparators: vec![semver::Comparator {
+                                op: semver::Op::Exact,
+                                major: resolved.inner.version.major,
+                                minor: Some(resolved.inner.version.minor),
+                                patch: Some(resolved.inner.version.patch),
+                                pre: semver::Prerelease::EMPTY,
+                            }],
+                        };
+
+                        let changed = dep_version != dep.req;
+                        if changed {
+                            // update cargo manifest
+                            let section = match dep.kind {
+                                DependencyKind::Normal => Some("dependencies"),
+                                DependencyKind::Development => Some("dev-dependencies"),
+                                DependencyKind::Build => Some("build-dependencies"),
+                                _ => None,
+                            };
+                            if let Some(section) = section {
+                                manifest[section][&dep.name]["version"] =
+                                    value(dep_version.to_string());
+                                manifest[section][&dep.name]
+                                    .as_inline_table_mut()
+                                    .map(toml_edit::InlineTable::fmt);
+                                need_update = true;
+                            }
+                        }
+                    }
+
+                    p.deps
+                        .write()
+                        .unwrap()
+                        .insert(resolved.inner.name.clone(), resolved.clone());
+
+                    resolved
+                        .dependants
+                        .write()
+                        .unwrap()
+                        .insert(p.inner.name.clone(), p.clone());
                 }
 
-                // write updated cargo manifest
-                if !options.dry_run && need_update {
-                    use tokio::io::AsyncWriteExt;
-                    action::debug!("{}", &manifest.to_string());
-                    action::info!("[{}@{}] updating {}", p.inner.name, p.inner.version, p.inner.manifest_path);
-                    let mut f = tokio::fs::OpenOptions::new()
-                        .write(true)
-                        .truncate(true)
-                        .open(&p.inner.manifest_path)
-                        .await?;
-                    f.write_all(manifest.to_string().as_bytes()).await?;
-                }
+                let is_dev_dep = dep.kind == DependencyKind::Development;
+                let is_non_local_dep = !is_dev_dep || dep.path.is_none();
+                let is_missing_exact_version = dep_version == semver::VersionReq::STAR;
 
-                Ok(())
+                if is_missing_exact_version && is_non_local_dep {
+                    return Err(eyre::eyre!(
+                        "{}: dependency {} has no specific version ({})",
+                        &p.inner.name,
+                        &dep.name,
+                        dep_version
+                    ).suggestion("to automatically resolve versions of local workspace members, use '--resolve-versions'"));
+                }
             }
+
+            // write updated cargo manifest
+            if !options.dry_run && need_update {
+                use tokio::io::AsyncWriteExt;
+                action::debug!("{}", &manifest.to_string());
+                action::info!("[{}@{}] updating {}", p.inner.name, p.inner.version, p.inner.manifest_path);
+                let mut f = tokio::fs::OpenOptions::new()
+                    .write(true)
+                    .truncate(true)
+                    .open(&p.inner.manifest_path)
+                    .await?;
+                f.write_all(manifest.to_string().as_bytes()).await?;
+            }
+
+            Ok(())
         })
         .buffer_unordered(8)
         .collect()
@@ -495,7 +498,7 @@ async fn build_dag(
 ///
 /// # Errors
 /// If any package cannot be published.
-pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
+pub async fn publish(mut options: Options) -> eyre::Result<()> {
     action::info!("searching cargo packages at {}", options.path.display());
 
     let manifest_path = if options.path.is_file() {
@@ -507,10 +510,8 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         .manifest_path(&manifest_path)
         .exec()?;
 
-    let packages: Arc<HashMap<PathBuf, Arc<Package>>> =
-        Arc::new(find_packages(&metadata, options.clone()).collect::<HashMap<_, _>>());
-
-    build_dag(packages.clone(), options.clone()).await?;
+    let packages: HashMap<PathBuf, Arc<Package>> = find_packages(&metadata, &options).collect();
+    build_dag(&packages, &options).await?;
 
     action::info!(
         "found packages: {:?}",
@@ -519,6 +520,9 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
             .map(|p| p.inner.name.clone())
             .collect::<Vec<_>>()
     );
+
+    options.max_retries = Some(options.max_retries.unwrap_or(2 * packages.len()));
+    let options = Arc::new(options);
 
     if packages.is_empty() {
         // fast path: nothing to do here
@@ -540,6 +544,7 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
 
         // start running ready tasks
         loop {
+            // aquire permit
             let Ok(permit) = limit.clone().try_acquire_owned() else {
                 break;
             };
@@ -553,12 +558,16 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
                     );
                 }
                 Some(p) => {
-                    let options_clone = options.clone();
-                    tasks.push(Box::pin(async move {
-                        let res = p.publish(options_clone).await;
-                        drop(permit);
-                        res
-                    }));
+                    tasks.push({
+                        let options = Arc::clone(&options);
+                        Box::pin(async move {
+                            let res = p.publish(options).await;
+
+                            // release permit
+                            drop(permit);
+                            res
+                        })
+                    });
                 }
                 // no more tasks
                 None => break,

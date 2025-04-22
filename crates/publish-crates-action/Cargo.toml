@@ -21,7 +21,7 @@ thiserror.workspace = true
 duration-string = "0"
 
 # github actions
-action-core = { version = "0", features = ["derive", "serde"] }
+action-core = { workspace = true, features = ["derive"] }
 
 # async runtime
 tokio = { version = "1", features = ["full"] }
@@ -31,3 +31,6 @@ publish-crates = { path = "../publish-crates/" }
 [dev-dependencies]
 similar-asserts.workspace = true
 itertools.workspace = true
+indoc = "2"
+serde = "1"
+serde_yaml = "0"

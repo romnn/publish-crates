@@ -4,7 +4,6 @@ members = [
   "crates/*",
 ]
 
-
 [workspace.package]
 version = "0.0.22"
 edition = "2024"

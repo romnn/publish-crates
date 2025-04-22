@@ -1,8 +1,8 @@
 use action_core::{self as action, Action};
 use color_eyre::eyre::{self, WrapErr};
 use publish_crates::{Options, publish};
+use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::Arc;
 
 pub struct Duration(std::time::Duration);
 
@@ -13,15 +13,16 @@ impl From<Duration> for std::time::Duration {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("{0} is not a valid duraition")]
-pub struct InvalidDuration(String);
+#[error("{0:?} is not a valid duraition")]
+pub struct InvalidDuration(OsString);
 
-impl action::ParseInput for Duration {
+impl action::input::Parse for Duration {
     type Error = InvalidDuration;
 
-    fn parse(value: String) -> Result<Self, Self::Error> {
+    fn parse(value: OsString) -> Result<Self, Self::Error> {
+        use std::str::FromStr;
         let dur = value.to_ascii_lowercase();
-        let dur = duration_string::DurationString::from_string(dur.clone())
+        let dur = duration_string::DurationString::from_str(&*dur.to_string_lossy())
             .map_err(|_| InvalidDuration(dur))?;
         Ok(Duration(dur.into()))
     }
@@ -71,7 +72,7 @@ async fn run() -> eyre::Result<()> {
     action::info!("include: {:?}", PublishCratesAction::include::<String>());
     action::info!("exclude: {:?}", PublishCratesAction::exclude::<String>());
 
-    let options = Arc::new(Options {
+    let options = Options {
         path,
         registry_token,
         dry_run,
@@ -82,7 +83,7 @@ async fn run() -> eyre::Result<()> {
         resolve_versions,
         include: None,
         exclude: None,
-    });
+    };
     publish(options).await?;
     Ok(())
 }
@@ -96,53 +97,86 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
-    use action_core::{self as action, Parse, ParseInput};
+    use super::{PublishCratesAction, PublishCratesActionInput};
+    use action_core::{self as action, Parse, input};
     use color_eyre::eyre;
+    use indoc::indoc;
     use itertools::Itertools;
     use similar_asserts::assert_eq as sim_assert_eq;
-    use std::str::FromStr;
+    use std::ffi::OsString;
     use std::time::Duration;
 
-    fn parse_duration(dur: impl Into<String>) -> Option<Duration> {
-        <super::Duration as ParseInput>::parse(dur.into())
+    fn parse_duration(dur: impl Into<OsString>) -> Option<Duration> {
+        <super::Duration as input::Parse>::parse(dur.into())
             .ok()
             .map(Into::into)
     }
 
     #[test]
     fn test_common_config() -> eyre::Result<()> {
-        let env = action::env::Env::from_str(
-            "
-registry-token: test-token
-resolve-versions: true
-publish-delay: 30s",
-        )?;
-        let config: Vec<_> = Action::parse_from(&env)
+        use input::SetInput;
+        use std::collections::HashMap;
+
+        color_eyre::install()?;
+
+        let config = indoc! {"
+            registry-token: test-token
+            resolve-versions: true
+            publish-delay: 30s"
+        };
+        let config = serde_yaml::from_str::<HashMap<String, String>>(config)?;
+        dbg!(&config);
+
+        let env = action::env::EnvMap::default();
+        for (k, v) in config {
+            env.set_input(k, v);
+        }
+        dbg!(&env);
+
+        let config: Vec<_> = PublishCratesAction::parse_from(&env)
             .into_iter()
             .sorted_by_key(|(input, _)| format!("{:?}", input))
             .collect();
-        dbg!(&config);
+
+        let expected = [
+            (
+                PublishCratesActionInput::Token,
+                Some("${{ github.token }}".to_string()),
+            ),
+            (PublishCratesActionInput::Version, None),
+            (PublishCratesActionInput::DryRun, Some("false".to_string())),
+            (PublishCratesActionInput::Path, Some(".".to_string())),
+            (
+                PublishCratesActionInput::RegistryToken,
+                Some("test-token".to_string()),
+            ),
+            (PublishCratesActionInput::MaxRetries, None),
+            (
+                PublishCratesActionInput::ConcurrencyLimit,
+                Some("4".to_string()),
+            ),
+            (PublishCratesActionInput::ExtraArgs, None),
+            (
+                PublishCratesActionInput::ResolveVersions,
+                Some("true".to_string()),
+            ),
+            (PublishCratesActionInput::Include, None),
+            (
+                PublishCratesActionInput::NoVerify,
+                Some("false".to_string()),
+            ),
+            (PublishCratesActionInput::Exclude, None),
+            (
+                PublishCratesActionInput::PublishDelay,
+                Some("30s".to_string()),
+            ),
+        ];
         sim_assert_eq!(
             config,
-            [
-                (Input::Token, Some("${{ github.token }}".to_string())),
-                (Input::Version, None),
-                (Input::DryRun, Some("false".to_string())),
-                (Input::Path, Some(".".to_string())),
-                (Input::RegistryToken, Some("test-token".to_string())),
-                (Input::MaxRetries, Some("5".to_string())),
-                (Input::ConcurrencyLimit, Some("4".to_string())),
-                (Input::ExtraArgs, None),
-                (Input::ResolveVersions, Some("true".to_string())),
-                (Input::Include, None),
-                (Input::NoVerify, Some("false".to_string())),
-                (Input::Exclude, None),
-                (Input::PublishDelay, Some("30s".to_string())),
-            ]
-            .into_iter()
-            .sorted_by_key(|(input, _)| format!("{:?}", input))
-            .collect::<Vec<_>>()
+            expected
+                .into_iter()
+                .sorted_by_key(|(input, _)| format!("{:?}", input))
+                .collect::<Vec<_>>()
         );
         Ok(())
     }

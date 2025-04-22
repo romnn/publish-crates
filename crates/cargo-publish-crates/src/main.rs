@@ -1,9 +1,7 @@
-// #![allow(warnings)]
 use clap::Parser;
 use color_eyre::eyre::{self, eyre};
 use publish_crates as publish;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::time::Duration;
 
 fn parse_duration_string(duration: &str) -> eyre::Result<Duration> {
@@ -82,6 +80,6 @@ async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
     let options: publish::Options = Options::parse().into();
-    publish::publish(Arc::new(options)).await?;
+    publish::publish(options).await?;
     Ok(())
 }

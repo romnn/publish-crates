@@ -31,7 +31,6 @@ inputs:
     default: "4"
   max-retries:
     description: Maximum number of retries when encountering intermittent errors
-    default: "5"
   no-verify:
     description: Disable pre-publish validation checks
     default: "false"

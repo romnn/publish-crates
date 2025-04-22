@@ -27,7 +27,7 @@ color-eyre.workspace = true
 thiserror.workspace = true
 
 # github actions
-action-core = "0"
+action-core.workspace = true
 
 semver = "1"
 cargo_metadata = "0"
