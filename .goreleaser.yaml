@@ -26,6 +26,40 @@ brews:
         enabled: false
 
 builds:
+  # # cargo-publish-crates linux gnu
+  # - id: "cargo-publish-crates-linux-gnu"
+  #   builder: rust
+  #   binary: cargo-publish-crates
+  #   # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
+  #   targets:
+  #     - x86_64-unknown-linux-gnu
+  #     - aarch64-unknown-linux-gnu
+  #   dir: ./
+  #   tool: cargo
+  #   command: zigbuild
+  #   flags:
+  #     - "--release"
+  #     - "--package=cargo-publish-crates"
+  #     - "--bin=cargo-publish-crates"
+  #     - "--target-dir=./target" # TODO: can we remove this once rust support is better?
+  #
+  # # cargo-publish-crates linux musl
+  # - id: "cargo-publish-crates-"
+  #   builder: rust
+  #   binary: cargo-publish-crates
+  #   # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
+  #   targets:
+  #     - x86_64-unknown-linux-musl
+  #     - aarch64-unknown-linux-musl
+  #   dir: ./
+  #   tool: cargo
+  #   command: zigbuild
+  #   flags:
+  #     - "--release"
+  #     - "--package=cargo-publish-crates"
+  #     - "--bin=cargo-publish-crates"
+  #     - "--target-dir=./target" # TODO: can we remove this once rust support is better?
+
   # cargo-publish-crates binary
   - id: "cargo-publish-crates"
     builder: rust
@@ -33,9 +67,7 @@ builds:
     # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
     targets:
       # linux
-      - x86_64-unknown-linux-gnu
       - x86_64-unknown-linux-musl
-      - aarch64-unknown-linux-gnu
       - aarch64-unknown-linux-musl
       # macos
       - x86_64-apple-darwin
