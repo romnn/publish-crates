@@ -5,8 +5,7 @@ version = 4
 [[package]]
 name = "action-core"
 version = "0.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a1ca0a2f08f43891e396e820ae74ceef588baf6b52a8ab1b1f6073f0153da15"
+source = "git+https://github.com/romnn/action-rs.git#bacdf1ad050b9cede54f5d86417bc889846e5c63"
 dependencies = [
  "action-derive",
  "parking_lot",
@@ -17,8 +16,7 @@ dependencies = [
 [[package]]
 name = "action-derive"
 version = "0.0.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "35c9a9fec6d353582fbeaa78be9b8ec7d89617233de8df1bf261e91a36519439"
+source = "git+https://github.com/romnn/action-rs.git#bacdf1ad050b9cede54f5d86417bc889846e5c63"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -272,7 +270,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-publish-crates"
-version = "0.0.24"
+version = "0.0.25"
 dependencies = [
  "clap",
  "color-eyre",
@@ -1210,7 +1208,7 @@ dependencies = [
 
 [[package]]
 name = "publish-crates"
-version = "0.0.24"
+version = "0.0.25"
 dependencies = [
  "action-core",
  "async-process",
@@ -1231,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "publish-crates-action"
-version = "0.0.24"
+version = "0.0.25"
 dependencies = [
  "action-core",
  "color-eyre",
