@@ -23,7 +23,7 @@ color-eyre = "0"
 thiserror = "2"
 
 # github actions
-action-core = { git = "https://github.com/romnn/action-rs.git" }
+action-core = "0"
 
 # testing
 similar-asserts = "1"

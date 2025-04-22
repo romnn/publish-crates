@@ -143,7 +143,10 @@ mod tests {
                 PublishCratesActionInput::Token,
                 Some("${{ github.token }}".to_string()),
             ),
-            (PublishCratesActionInput::Version, None),
+            (
+                PublishCratesActionInput::Version,
+                Some("latest".to_string()),
+            ),
             (PublishCratesActionInput::DryRun, Some("false".to_string())),
             (PublishCratesActionInput::Path, Some(".".to_string())),
             (

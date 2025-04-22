@@ -4,8 +4,9 @@ version = 4
 
 [[package]]
 name = "action-core"
-version = "0.0.12"
-source = "git+https://github.com/romnn/action-rs.git#bacdf1ad050b9cede54f5d86417bc889846e5c63"
+version = "0.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "88177262a83bb2949511eab7fb3cf3f101c5c341c94ac554d2c1d31a83f850dc"
 dependencies = [
  "action-derive",
  "parking_lot",
@@ -15,8 +16,9 @@ dependencies = [
 
 [[package]]
 name = "action-derive"
-version = "0.0.12"
-source = "git+https://github.com/romnn/action-rs.git#bacdf1ad050b9cede54f5d86417bc889846e5c63"
+version = "0.0.13"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f89a423c1f337cf8d370cde480da67cd98312267084884cdc41c8842e61b3c64"
 dependencies = [
  "proc-macro2",
  "quote",
