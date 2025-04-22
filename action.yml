@@ -7,6 +7,7 @@ branding:
 inputs:
   version:
     description: Version of the tool (defaults to the version of the action)
+    default: "latest"
   token:
     description: Github API token
     default: ${{ github.token }}
@@ -43,7 +44,7 @@ runs:
     - name: Install publish-crates-action
       uses: romnn/action-release-download@main
       with:
-        version: "latest"
+        version: ${{ inputs.version }}
         repo: romnn/publish-crates
         # prettier-ignore
         assets: |
@@ -63,7 +64,6 @@ runs:
       shell: bash
       run: publish-crates-action
       env:
-        INPUT_VERSION: ${{ inputs.version }}
         INPUT_TOKEN: ${{ inputs.token }}
         INPUT_PATH: ${{ inputs.path }}
         INPUT_INCLUDE: ${{ inputs.include }}
