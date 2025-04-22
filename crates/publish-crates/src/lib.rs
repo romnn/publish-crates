@@ -215,13 +215,15 @@ impl Package {
         loop {
             attempt += 1;
 
-            action::warning!(
-                "[{}@{}] publishing (attempt {}/{})",
-                self.inner.name,
-                self.inner.version,
-                attempt,
-                max_retries
-            );
+            if attempt > 1 {
+                action::warning!(
+                    "[{}@{}] publishing (attempt {}/{})",
+                    self.inner.name,
+                    self.inner.version,
+                    attempt,
+                    max_retries
+                );
+            }
 
             let output = cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -232,21 +234,6 @@ impl Package {
             if !output.status.success() {
                 action::warning!("{}", &stdout);
                 action::warning!("{}", &stderr);
-
-                // let is_too_many_requests = stderr.contains("429 Too Many Requests");
-                // let is_internal_server_error = stderr.contains("500 Internal Server Error");
-                // let is_intermittent_failure = is_too_many_requests || is_internal_server_error;
-                //
-                // let mut wait_duration = std::time::Duration::from_secs(1 * 60);
-                //
-                // if is_too_many_requests {
-                //     action::warning!(
-                //         "[{}@{}] intermittent failure: 429 Too Many Requests",
-                //         self.inner.name,
-                //         self.inner.version
-                //     );
-                //     wait_duration = std::time::Duration::from_secs(10 * 60);
-                // }
 
                 if stderr.contains("already exists on crates.io index") {
                     break;
@@ -270,6 +257,7 @@ impl Package {
                                 // 10 minutes
                                 std::time::Duration::from_secs(10 * 60)
                             }
+                            // 5 minutes
                             _ => std::time::Duration::from_secs(5 * 60),
                         }
                     }
@@ -544,7 +532,7 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
 
         // start running ready tasks
         loop {
-            // aquire permit
+            // acquire permit
             let Ok(permit) = limit.clone().try_acquire_owned() else {
                 break;
             };
