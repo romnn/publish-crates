@@ -32,7 +32,7 @@ path = "src/main.rs"
 color-eyre.workspace = true
 
 # argument parsing
-clap = { version = "4", features = ["derive", "env"] }
+clap = { version = "4", features = ["derive", "env", "string"] }
 duration-string = "0"
 
 # async runtime

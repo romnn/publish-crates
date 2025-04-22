@@ -48,6 +48,18 @@ async fn run() -> eyre::Result<()> {
         .wrap_err("invalid value for publish-delay")?
         .map(std::time::Duration::from);
 
+    let max_retries = PublishCratesAction::max_retries::<String>()?
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .wrap_err("invalid value for max-retries")?;
+
+    let concurrency_limit = PublishCratesAction::concurrency_limit::<String>()?
+        .as_deref()
+        .map(str::parse)
+        .transpose()
+        .wrap_err("invalid value for concurrency-limit")?;
+
     let no_verify = PublishCratesAction::no_verify::<bool>()
         .wrap_err("invalid value for option no-verify")?
         .unwrap_or(false);
@@ -64,6 +76,8 @@ async fn run() -> eyre::Result<()> {
         registry_token,
         dry_run,
         publish_delay,
+        max_retries,
+        concurrency_limit,
         no_verify,
         resolve_versions,
         include: None,
@@ -85,7 +99,8 @@ mod tests {
     use super::{PublishCratesAction as Action, PublishCratesActionInput as Input};
     use action_core::{self as action, Parse, ParseInput};
     use color_eyre::eyre;
-    use std::collections::HashMap;
+    use itertools::Itertools;
+    use similar_asserts::assert_eq as sim_assert_eq;
     use std::str::FromStr;
     use std::time::Duration;
 
@@ -103,32 +118,40 @@ registry-token: test-token
 resolve-versions: true
 publish-delay: 30s",
         )?;
-        let config = Action::parse_from(&env);
+        let config: Vec<_> = Action::parse_from(&env)
+            .into_iter()
+            .sorted_by_key(|(input, _)| format!("{:?}", input))
+            .collect();
         dbg!(&config);
-        assert_eq!(
+        sim_assert_eq!(
             config,
-            HashMap::from_iter([
+            [
                 (Input::Token, Some("${{ github.token }}".to_string())),
                 (Input::Version, None),
                 (Input::DryRun, Some("false".to_string())),
                 (Input::Path, Some(".".to_string())),
                 (Input::RegistryToken, Some("test-token".to_string())),
+                (Input::MaxRetries, Some("5".to_string())),
+                (Input::ConcurrencyLimit, Some("4".to_string())),
                 (Input::ExtraArgs, None),
                 (Input::ResolveVersions, Some("true".to_string())),
                 (Input::Include, None),
                 (Input::NoVerify, Some("false".to_string())),
                 (Input::Exclude, None),
                 (Input::PublishDelay, Some("30s".to_string())),
-            ])
+            ]
+            .into_iter()
+            .sorted_by_key(|(input, _)| format!("{:?}", input))
+            .collect::<Vec<_>>()
         );
         Ok(())
     }
 
     #[test]
     fn test_parse_duration() {
-        assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("30S"), Some(Duration::from_secs(30)));
-        assert_eq!(parse_duration("20m"), Some(Duration::from_secs(20 * 60)));
+        sim_assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
+        sim_assert_eq!(parse_duration("30S"), Some(Duration::from_secs(30)));
+        sim_assert_eq!(parse_duration("20m"), Some(Duration::from_secs(20 * 60)));
         // todo: fix this?
         // assert_eq!(
         //     parse_duration_string("1m30s").ok(),

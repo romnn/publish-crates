@@ -49,6 +49,16 @@ pub struct Options {
     ///
     /// Excluded package names have precedence over included package names.
     pub exclude: Option<Vec<String>>,
+
+    /// Maximum number of retries when encountering intermittent errors.
+    ///
+    /// Common intermittent failures are:
+    /// - 500 Internal Server Error
+    /// - 429 Too Many Requests
+    pub max_retries: Option<usize>,
+
+    /// Maximum number of packages to publish concurrently.
+    pub concurrency_limit: Option<usize>,
 }
 
 /// A cargo package.
@@ -145,9 +155,9 @@ impl Package {
         loop {
             ticker.tick().await;
             action::info!(
-                "checking if {} {} is available",
+                "[{}@{}] checking if available",
                 self.inner.name,
-                self.inner.version.to_string()
+                self.inner.version,
             );
             if self.is_available().await? {
                 return Ok(());
@@ -168,7 +178,7 @@ impl Package {
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
-        action::info!("publishing {}", self.inner.name,);
+        action::info!("[{}@{}] publishing", self.inner.name, self.inner.version);
 
         let mut cmd = Command::new("cargo");
         cmd.arg("publish");
@@ -188,8 +198,8 @@ impl Package {
                 // cmd.arg("--offline");
                 // skip cargo dry-run as it will always fail
                 action::info!(
-                    "dry-run: proceed without `cargo publish --dry-run` for {} {} due to resolve version incompatibility",
-                    &self.inner.name,
+                    "[{}@{}] dry-run: proceed without `cargo publish --dry-run` due to resolve version incompatibility",
+                    self.inner.name,
                     self.inner.version
                 );
                 *self.published.lock().unwrap() = true;
@@ -200,19 +210,91 @@ impl Package {
             // when resolving versions, we may write to Cargo.toml
             cmd.arg("--allow-dirty");
         }
-        let output = cmd.output().await?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        action::debug!("{}", &stdout);
-        action::debug!("{}", &stderr);
 
-        if !output.status.success() {
-            eyre::bail!("command {:?} failed: {}", cmd, stderr);
+        let max_retries = options.max_retries.unwrap_or(10);
+        let mut attempt = 0;
+        loop {
+            attempt += 1;
+
+            let output = cmd.output().await?;
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            action::debug!("{}", &stdout);
+            action::debug!("{}", &stderr);
+
+            if !output.status.success() {
+                action::warning!("{}", &stdout);
+                action::warning!("{}", &stderr);
+
+                // let is_too_many_requests = stderr.contains("429 Too Many Requests");
+                // let is_internal_server_error = stderr.contains("500 Internal Server Error");
+                // let is_intermittent_failure = is_too_many_requests || is_internal_server_error;
+                //
+                // let mut wait_duration = std::time::Duration::from_secs(1 * 60);
+                //
+                // if is_too_many_requests {
+                //     action::warning!(
+                //         "[{}@{}] intermittent failure: 429 Too Many Requests",
+                //         self.inner.name,
+                //         self.inner.version
+                //     );
+                //     wait_duration = std::time::Duration::from_secs(10 * 60);
+                // }
+
+                if stderr.contains("already exists on crates.io index") {
+                    break;
+                }
+
+                let error = classify_publish_error(&stderr);
+                let wait_duration = match error {
+                    PublishError::Fatal(_) => {
+                        eyre::bail!("command {:?} failed: {}", cmd, stderr);
+                    }
+                    PublishError::Retryable(code) => {
+                        action::warning!(
+                            "[{}@{}] intermittent failure: {} {}",
+                            self.inner.name,
+                            self.inner.version,
+                            code.as_u16(),
+                            code.canonical_reason().unwrap_or_default(),
+                        );
+                        match code {
+                            http::StatusCode::TOO_MANY_REQUESTS => {
+                                // 10 minutes
+                                std::time::Duration::from_secs(10 * 60)
+                            }
+                            _ => std::time::Duration::from_secs(5 * 60),
+                        }
+                    }
+                    PublishError::Unknown => {
+                        action::warning!(
+                            "[{}@{}] unknown failure",
+                            self.inner.name,
+                            self.inner.version,
+                        );
+                        // 5 minutes
+                        std::time::Duration::from_secs(5 * 60)
+                    }
+                };
+
+                if attempt >= max_retries {
+                    eyre::bail!("command {:?} failed: {}", cmd, stderr);
+                }
+
+                action::warning!(
+                    "[{}@{}] attempting again in {wait_duration:?}",
+                    self.inner.name,
+                    self.inner.version
+                );
+                sleep(wait_duration).await;
+            } else {
+                break;
+            }
         }
 
         if options.dry_run {
             action::info!(
-                "dry-run: skipping waiting for {} {} to be published",
+                "[{}@{}] dry-run: skip waiting for successful publish",
                 &self.inner.name,
                 self.inner.version
             );
@@ -239,7 +321,11 @@ impl Package {
         }
 
         *self.published.lock().unwrap() = true;
-        action::info!("published {}", self.inner.name);
+        action::info!(
+            "[{}@{}] published successfully",
+            self.inner.name,
+            self.inner.version
+        );
 
         Ok(self)
     }
@@ -299,6 +385,7 @@ async fn build_dag(
                 let mut need_update = false;
 
                 for dep in &p.inner.dependencies {
+                    // dbg!(&dep);
                     let mut dep_version = dep.req.clone();
                     if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
                         // also if the version is set, we want to resolve automatically?
@@ -365,9 +452,11 @@ async fn build_dag(
                             .insert(p.inner.name.clone(), p.clone());
                     }
 
-                    if dep_version == semver::VersionReq::STAR
-                        && (dep.kind != DependencyKind::Development || dep.path.is_none())
-                    {
+                    let is_dev_dep = dep.kind == DependencyKind::Development;
+                    let is_non_local_dep = !is_dev_dep || dep.path.is_none();
+                    let is_missing_exact_version = dep_version == semver::VersionReq::STAR;
+
+                    if is_missing_exact_version && is_non_local_dep {
                         return Err(eyre::eyre!(
                             "{}: dependency {} has no specific version ({})",
                             &p.inner.name,
@@ -381,7 +470,7 @@ async fn build_dag(
                 if !options.dry_run && need_update {
                     use tokio::io::AsyncWriteExt;
                     action::debug!("{}", &manifest.to_string());
-                    action::warning!("{}: updating {}", &p.inner.name, &p.inner.manifest_path);
+                    action::info!("[{}@{}] updating {}", p.inner.name, p.inner.version, p.inner.manifest_path);
                     let mut f = tokio::fs::OpenOptions::new()
                         .write(true)
                         .truncate(true)
@@ -439,7 +528,9 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
         packages.values().filter(|p| p.ready()).cloned().collect();
 
     let mut tasks: FuturesUnordered<Pin<Box<TaskFut>>> = FuturesUnordered::new();
-    let limit = Arc::new(Semaphore::new(5));
+
+    let limit = options.concurrency_limit.unwrap_or(4);
+    let limit = Arc::new(Semaphore::new(limit));
 
     loop {
         // check if we are done
@@ -455,7 +546,11 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
             // check if we can publish
             match ready.pop_front() {
                 Some(p) if !p.should_publish => {
-                    action::info!("skipping: {} (publish=false)", p.inner.name);
+                    action::info!(
+                        "[{}@{}] skipping (publish=false)",
+                        p.inner.name,
+                        p.inner.version
+                    );
                 }
                 Some(p) => {
                     let options_clone = options.clone();
@@ -499,4 +594,100 @@ pub async fn publish(options: Arc<Options>) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Classification of publishing errors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PublishError {
+    Unknown,
+    Retryable(http::StatusCode),
+    Fatal(http::StatusCode),
+}
+
+impl PublishError {
+    pub fn code(&self) -> Option<&http::StatusCode> {
+        match self {
+            Self::Unknown => None,
+            Self::Retryable(code) | Self::Fatal(code) => Some(code),
+        }
+    }
+}
+
+/// Classify publish errors based on the error message.
+///
+/// This approach assumes that the error messages of `cargo publish` include network errors
+/// in the form `<code> <canonical_reason>`.
+///
+/// # Returns:
+/// - `Retryable(code)` if a temporary / intermittent error was detected
+/// - `Fatal(code)` if a fatal network error was detected (such as missing permissions)
+/// - `Unknown` otherwise
+fn classify_publish_error(text: &str) -> PublishError {
+    for code_num in 100u16..=599 {
+        let Ok(code) = http::StatusCode::from_u16(code_num) else {
+            continue;
+        };
+        let Some(reason) = code.canonical_reason() else {
+            continue;
+        };
+
+        let needle = format!("{} {}", code.as_str(), reason);
+        if text.contains(&needle) {
+            if code.is_redirection()
+                || code.is_server_error()
+                || code == http::StatusCode::NOT_FOUND
+                || code == http::StatusCode::REQUEST_TIMEOUT
+                || code == http::StatusCode::CONFLICT
+                || code == http::StatusCode::GONE
+                || code == http::StatusCode::PRECONDITION_FAILED
+                || code == http::StatusCode::RANGE_NOT_SATISFIABLE
+                || code == http::StatusCode::EXPECTATION_FAILED
+                || code == http::StatusCode::MISDIRECTED_REQUEST
+                || code == http::StatusCode::UNPROCESSABLE_ENTITY
+                || code == http::StatusCode::LOCKED
+                || code == http::StatusCode::FAILED_DEPENDENCY
+                || code == http::StatusCode::TOO_EARLY
+                || code == http::StatusCode::UPGRADE_REQUIRED
+                || code == http::StatusCode::PRECONDITION_REQUIRED
+                || code == http::StatusCode::TOO_MANY_REQUESTS
+                || code == http::StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS
+                || code == http::StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS
+            {
+                return PublishError::Retryable(code);
+            } else {
+                return PublishError::Fatal(code);
+            }
+        }
+    }
+
+    PublishError::Unknown
+}
+
+#[cfg(test)]
+mod tests {
+    use similar_asserts::assert_eq as sim_assert_eq;
+
+    #[test]
+    fn classify_publish_error() {
+        sim_assert_eq!(
+            super::classify_publish_error(
+                "the remote server responded with an error (status 429 Too Many Requests): You have published too many new crates in a short period of time. Please try again after Mon, 21 Apr 2025 19:31:32 GMT or email help@crates.io to have your limit increased."
+            ),
+            super::PublishError::Retryable(http::StatusCode::TOO_MANY_REQUESTS)
+        );
+
+        sim_assert_eq!(
+            super::classify_publish_error(
+                "the remote server responded with an error (status 500 Internal Server Error): Internal Server Error"
+            ),
+            super::PublishError::Retryable(http::StatusCode::INTERNAL_SERVER_ERROR)
+        );
+
+        sim_assert_eq!(
+            super::classify_publish_error(
+                "the remote server responded with some error we don't know more about"
+            ),
+            super::PublishError::Unknown,
+        );
+    }
 }

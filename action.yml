@@ -26,6 +26,12 @@ inputs:
     default: "false"
   publish-delay:
     description: Delay before attempting to publish dependent crate
+  concurrency-limit:
+    description: Maximum number of packages to publish concurrently
+    default: "4"
+  max-retries:
+    description: Maximum number of retries when encountering intermittent errors
+    default: "5"
   no-verify:
     description: Disable pre-publish validation checks
     default: "false"

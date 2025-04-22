@@ -462,6 +462,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04782251e09dc67c90d694d89e9a3e5fc6cfe883df1b203202de672d812fb299"
 
 [[package]]
+name = "either"
+version = "1.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
+
+[[package]]
 name = "encode_unicode"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -953,6 +959,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7943c866cc5cd64cbc25b2e01621d07fa8eb2a1a23160ee81ce38704e97b8ecf"
 
 [[package]]
+name = "itertools"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
+dependencies = [
+ "either",
+]
+
+[[package]]
 name = "itoa"
 version = "1.0.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1171,6 +1186,7 @@ dependencies = [
  "color-eyre",
  "crates_io_api",
  "futures",
+ "http",
  "reqwest",
  "semver",
  "similar-asserts",
@@ -1186,6 +1202,7 @@ dependencies = [
  "action-core",
  "color-eyre",
  "duration-string",
+ "itertools",
  "publish-crates",
  "similar-asserts",
  "thiserror 2.0.12",

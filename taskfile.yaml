@@ -24,20 +24,52 @@ tasks:
     cmds:
       - cargo build --all-targets {{.CLI_ARGS}}
 
+  build:fc:
+    desc: "build in debug mode for all combinations of features"
+    cmds:
+      - cargo fc build --all-targets {{.CLI_ARGS}}
+
   build:release:
     desc: "build in release mode"
     cmds:
       - cargo build --all-targets --release {{.CLI_ARGS}}
 
   build:goreleaser:
-    desc: "build in release mode using goreleaser"
+    desc: "cross compile using goreleaser"
     cmds:
-      - goreleaser build --snapshot --clean
+      # pretter-ignore
+      - >-
+        docker run --rm
+        -v "${PWD}:/workspace"
+        -w /workspace
+        ghcr.io/rust-cross/cargo-zigbuild
+        bash -c './release.sh && goreleaser build --snapshot --clean --timeout 120m'
+
+  build:container:
+    desc: "build multi-arch docker container from source"
+    cmds:
+      # pretter-ignore
+      - >-
+        docker buildx build
+        --load
+        --platform linux/amd64,linux/arm64
+        -f ./docker/build_from_source.dockerfile
+        -t publish-crates:latest
+        ./
+        {{.CLI_ARGS}}
 
   release:
     desc: "release using goreleaser"
     cmds:
-      - goreleaser release --clean
+      # pretter-ignore
+      - >-
+        docker run --rm
+        -e "GITHUB_TOKEN=${GITHUB_TOKEN}"
+        -e "TAP_GITHUB_TOKEN=${TAP_GITHUB_TOKEN}"
+        -v "${PWD}:/workspace"
+        -w /workspace
+        ghcr.io/rust-cross/cargo-zigbuild
+        bash -c './release.sh && goreleaser release --clean --timeout 120m'
 
   typos:
     desc: "check repository for typos"

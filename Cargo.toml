@@ -4,6 +4,7 @@ members = [
   "crates/*",
 ]
 
+
 [workspace.package]
 version = "0.0.18"
 edition = "2024"
@@ -11,16 +12,6 @@ authors = ["romnn <contact@romnn.com>"]
 description = "Publish rust crates with support for cargo workspaces"
 homepage = "https://github.com/romnn/publish-crates"
 repository = "https://github.com/romnn/publish-crates"
-# categories = [
-#   "development-tools",
-# ]
-# keywords = [
-#   "crates-io",
-#   "ci-cd",
-#   "publish",
-#   "cli",
-# ]
-# exclude = []
 
 [profile.release]
 codegen-units = 1
@@ -37,3 +28,4 @@ action-core = "0"
 
 # testing
 similar-asserts = "1"
+itertools = "0"

@@ -30,3 +30,4 @@ publish-crates = { path = "../publish-crates/" }
 
 [dev-dependencies]
 similar-asserts.workspace = true
+itertools.workspace = true
