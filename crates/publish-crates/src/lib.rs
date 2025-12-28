@@ -441,13 +441,13 @@ async fn build_dag(
                     p.deps
                         .write()
                         .unwrap()
-                        .insert(resolved.inner.name.clone(), resolved.clone());
+                        .insert(resolved.inner.name.to_string(), resolved.clone());
 
                     resolved
                         .dependants
                         .write()
                         .unwrap()
-                        .insert(p.inner.name.clone(), p.clone());
+                        .insert(p.inner.name.to_string(), p.clone());
                 }
 
                 let is_dev_dep = dep.kind == DependencyKind::Development;
