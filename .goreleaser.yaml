@@ -8,12 +8,12 @@ before:
     - rustup default stable
     - cargo install --locked --force cargo-zigbuild
 
-brews:
-  - name: cargo-publish-crates
+homebrew_casks:
+  - name: &cargo-publish-crates cargo-publish-crates
     ids:
-      - cargo-publish-crates
+      - *cargo-publish-crates
     description: "Publish rust crates with support for cargo workspaces"
-    directory: Formula
+    directory: Casks
     commit_author:
       name: romnn
       email: contact@romnn.com
@@ -24,12 +24,17 @@ brews:
       token: "{{ .Env.TAP_GITHUB_TOKEN }}"
       pull_request:
         enabled: false
+    hooks:
+      post:
+        install: |
+          if OS.mac? && File.exist?("/usr/bin/xattr")
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/cargo-publish-crates"]
+          end
 
 builds:
-  # cargo-publish-crates binary
-  - id: "cargo-publish-crates"
+  - id: *cargo-publish-crates
     builder: rust
-    binary: cargo-publish-crates
+    binary: *cargo-publish-crates
     # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
     targets:
       # linux
@@ -50,10 +55,9 @@ builds:
       - "--bin=cargo-publish-crates"
       - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 
-  # publish-crates-action binary
-  - id: "publish-crates-action"
+  - id: &publish-crates-action publish-crates-action
     builder: rust
-    binary: publish-crates-action
+    binary: *publish-crates-action
     # see: https://doc.rust-lang.org/nightly/rustc/platform-support.html
     targets:
       # linux
@@ -75,21 +79,21 @@ builds:
       - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 
 archives:
-  - id: cargo-publish-crates
+  - id: *cargo-publish-crates
     formats: ["tar.gz"]
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     ids:
-      - cargo-publish-crates
+      - *cargo-publish-crates
     files:
       - LICENSE
     format_overrides:
       - goos: windows
         formats: ["zip"]
-  - id: publish-crates-action
+  - id: *publish-crates-action
     formats: ["tar.gz"]
     name_template: "{{ .Binary }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     ids:
-      - publish-crates-action
+      - *publish-crates-action
     files:
       - LICENSE
     format_overrides:

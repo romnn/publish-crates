@@ -22,7 +22,7 @@ impl action::input::Parse for Duration {
     fn parse(value: OsString) -> Result<Self, Self::Error> {
         use std::str::FromStr;
         let dur = value.to_ascii_lowercase();
-        let dur = duration_string::DurationString::from_str(&*dur.to_string_lossy())
+        let dur = duration_string::DurationString::from_str(&dur.to_string_lossy())
             .map_err(|_| InvalidDuration(dur))?;
         Ok(Duration(dur.into()))
     }
@@ -135,7 +135,7 @@ mod tests {
 
         let config: Vec<_> = PublishCratesAction::parse_from(&env)
             .into_iter()
-            .sorted_by_key(|(input, _)| format!("{:?}", input))
+            .sorted_by_key(|(input, _)| format!("{input:?}"))
             .collect();
 
         let expected = [
@@ -178,7 +178,7 @@ mod tests {
             config,
             expected
                 .into_iter()
-                .sorted_by_key(|(input, _)| format!("{:?}", input))
+                .sorted_by_key(|(input, _)| format!("{input:?}"))
                 .collect::<Vec<_>>()
         );
         Ok(())

@@ -26,26 +26,31 @@ exclude = []
 color-eyre.workspace = true
 thiserror.workspace = true
 
-# github actions
+# Concurrency
+parking_lot.workspace = true
+
+# Github actions
 action-core.workspace = true
 
+# Read Cargo.toml
 semver = "1"
 cargo_metadata = "0"
 toml_edit = "0"
 
-# pretty print time
+# Pretty print time
 time = { version = "0", features = ["formatting", "std", "macros"] }
 humantime = "2"
 
-# async runtime
+# Async runtime
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 async-process = "2"
 
-# cargo api
+# Cargo api
 crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
 reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
 http = "1"
 
 [dev-dependencies]
 similar-asserts.workspace = true
+tempfile = "3"

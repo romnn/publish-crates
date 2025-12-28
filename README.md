@@ -10,9 +10,9 @@
 ### Installation
 
 ```bash
-brew install romnn/tap/cargo-publish-crates
+brew install --cask romnn/tap/cargo-publish-crates
 
-# or install from source
+# Or install from source
 cargo install cargo-publish-crates
 ```
 
