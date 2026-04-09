@@ -13,6 +13,8 @@ homebrew_casks:
     ids:
       - *cargo-publish-crates
     description: "Publish rust crates with support for cargo workspaces"
+    custom_block: |
+      os macos: "darwin", linux: "linux"
     directory: Casks
     commit_author:
       name: romnn
