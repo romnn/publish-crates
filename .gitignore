@@ -3,6 +3,9 @@ goreleaser-dist/
 .intentionally-empty-file.o
 *_compiler_family.o
 
+# cooldown
+.cooldown.lock
+
 /target
 /node_modules
 /tmp

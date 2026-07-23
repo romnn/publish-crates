@@ -39,7 +39,7 @@ parking_lot = "0"
 action-core = "0"
 
 # testing
-similar-asserts = "1"
+similar-asserts = "2.0.0"
 itertools = "0"
 
 [workspace.lints.rust]

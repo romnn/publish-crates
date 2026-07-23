@@ -51,7 +51,7 @@ async-process = "2"
 
 # Cargo api
 crates_io_api = { version = "0", default-features = false, features = ["rustls"] }
-reqwest = { version = "0", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 http = "1"
 
 [dev-dependencies]
