@@ -24,6 +24,9 @@ keywords = [
 ]
 exclude = []
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "cargo-publish-crates"
 path = "src/main.rs"

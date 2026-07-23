@@ -9,6 +9,9 @@ description.workspace = true
 homepage.workspace = true
 repository.workspace = true
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "publish-crates-action"
 path = "src/main.rs"

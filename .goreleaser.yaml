@@ -3,11 +3,6 @@ version: 2
 
 dist: goreleaser-dist
 
-before:
-  hooks:
-    - rustup default stable
-    - cargo install --locked --force cargo-zigbuild
-
 homebrew_casks:
   - name: &cargo-publish-crates cargo-publish-crates
     ids:
@@ -48,14 +43,11 @@ builds:
       # windows
       - x86_64-pc-windows-gnu
       - aarch64-pc-windows-gnullvm
-    dir: ./
     tool: cargo
     command: zigbuild
     flags:
       - "--release"
       - "--package=cargo-publish-crates"
-      - "--bin=cargo-publish-crates"
-      - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 
   - id: &publish-crates-action publish-crates-action
     builder: rust
@@ -71,14 +63,11 @@ builds:
       # windows
       - x86_64-pc-windows-gnu
       - aarch64-pc-windows-gnullvm
-    dir: ./
     tool: cargo
     command: zigbuild
     flags:
       - "--release"
       - "--package=publish-crates-action"
-      - "--bin=publish-crates-action"
-      - "--target-dir=./target" # TODO: can we remove this once rust support is better?
 
 archives:
   - id: *cargo-publish-crates

@@ -1,10 +1,12 @@
-use action_core::{self as action, Action};
+//! GitHub Actions entry point for publishing interdependent Cargo workspace packages.
+
+use action_core::{self as action};
 use color_eyre::eyre::{self, WrapErr};
 use publish_crates::{Options, publish};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
-pub struct Duration(std::time::Duration);
+struct Duration(std::time::Duration);
 
 impl From<Duration> for std::time::Duration {
     fn from(dur: Duration) -> Self {
@@ -13,8 +15,8 @@ impl From<Duration> for std::time::Duration {
 }
 
 #[derive(thiserror::Error, Debug)]
-#[error("{0:?} is not a valid duraition")]
-pub struct InvalidDuration(OsString);
+#[error("{0:?} is not a valid duration")]
+struct InvalidDuration(OsString);
 
 impl action::input::Parse for Duration {
     type Error = InvalidDuration;
@@ -28,9 +30,17 @@ impl action::input::Parse for Duration {
     }
 }
 
-#[derive(Action)]
-#[action = "../../action.yml"]
-pub struct PublishCratesAction;
+mod action_definition {
+    use action_core::Action;
+
+    #[derive(Action)]
+    #[action = "../../action.yml"]
+    pub(super) struct PublishCratesAction;
+}
+
+use action_definition::PublishCratesAction;
+#[cfg(test)]
+use action_definition::PublishCratesActionInput;
 
 async fn run() -> eyre::Result<()> {
     color_eyre::install()?;
@@ -125,13 +135,11 @@ mod tests {
             publish-delay: 30s"
         };
         let config = serde_yaml::from_str::<HashMap<String, String>>(config)?;
-        dbg!(&config);
 
         let env = action::env::EnvMap::default();
         for (k, v) in config {
             env.set_input(k, v);
         }
-        dbg!(&env);
 
         let config: Vec<_> = PublishCratesAction::parse_from(&env)
             .into_iter()
@@ -188,7 +196,7 @@ mod tests {
     fn test_parse_duration() {
         sim_assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
         sim_assert_eq!(parse_duration("30S"), Some(Duration::from_secs(30)));
-        sim_assert_eq!(parse_duration("20m"), Some(Duration::from_secs(20 * 60)));
+        sim_assert_eq!(parse_duration("20m"), Some(Duration::from_mins(20)));
         // todo: fix this?
         // assert_eq!(
         //     parse_duration_string("1m30s").ok(),

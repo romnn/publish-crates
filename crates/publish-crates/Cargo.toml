@@ -22,6 +22,9 @@ keywords = [
 ]
 exclude = []
 
+[lints]
+workspace = true
+
 [dependencies]
 color-eyre.workspace = true
 thiserror.workspace = true

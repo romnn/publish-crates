@@ -2,6 +2,13 @@
 current_version = "0.0.29"
 commit = true
 tag = true
+pre_commit_hooks = [
+  # Keep Cargo.lock's workspace package versions aligned with the manifest.
+  "cargo update --offline"
+]
+additional_files = [
+  "Cargo.lock"
+]
 
 [[tool.bumpversion.files]]
 filename = "Cargo.toml"

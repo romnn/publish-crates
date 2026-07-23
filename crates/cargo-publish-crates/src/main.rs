@@ -1,3 +1,5 @@
+//! Command-line interface for publishing interdependent Cargo workspace packages.
+
 use clap::Parser;
 use color_eyre::eyre::{self, eyre};
 use publish_crates as publish;
@@ -46,9 +48,11 @@ struct Options {
     exclude: Option<Vec<String>>,
 }
 
-impl From<Options> for publish::Options {
-    fn from(options: Options) -> Self {
-        let working_dir = std::env::current_dir().unwrap();
+impl TryFrom<Options> for publish::Options {
+    type Error = std::io::Error;
+
+    fn try_from(options: Options) -> Result<Self, Self::Error> {
+        let working_dir = std::env::current_dir()?;
         let path = options.path.as_ref().map_or_else(
             || working_dir.join("Cargo.toml"),
             |p| {
@@ -60,7 +64,7 @@ impl From<Options> for publish::Options {
             },
         );
 
-        publish::Options {
+        Ok(publish::Options {
             path,
             registry_token: options.registry_token,
             dry_run: options.dry_run,
@@ -71,7 +75,7 @@ impl From<Options> for publish::Options {
             resolve_versions: options.resolve_versions,
             include: options.include,
             exclude: options.exclude,
-        }
+        })
     }
 }
 
@@ -79,7 +83,7 @@ impl From<Options> for publish::Options {
 async fn main() -> eyre::Result<()> {
     color_eyre::install()?;
 
-    let options: publish::Options = Options::parse().into();
+    let options: publish::Options = Options::parse().try_into()?;
     publish::publish(options).await?;
     Ok(())
 }

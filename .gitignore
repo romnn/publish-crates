@@ -1,8 +1,10 @@
+# goreleaser + zig
+goreleaser-dist/
+.intentionally-empty-file.o
+*_compiler_family.o
+
 /target
-/goreleaser-dist
 /node_modules
 /tmp
 /act
 /*.tar.gz
-
-.intentionally-empty-file.o

@@ -1,3 +1,5 @@
+//! Publishes interdependent Cargo workspace packages in dependency order.
+
 use action_core as action;
 use cargo_metadata::DependencyKind;
 use color_eyre::{Section, eyre};
@@ -113,7 +115,7 @@ impl Package {
 
         let api = AsyncClient::new(
             "publish_crates (https://github.com/romnn/publish-crates)",
-            std::time::Duration::from_millis(1000),
+            std::time::Duration::from_secs(1),
         )?;
 
         let info = match api.get_crate(&self.inner.name).await {
@@ -146,9 +148,7 @@ impl Package {
         &self,
         timeout: impl Into<Option<Duration>>,
     ) -> eyre::Result<()> {
-        let timeout = timeout
-            .into()
-            .unwrap_or_else(|| Duration::from_secs(2 * 60));
+        let timeout = timeout.into().unwrap_or_else(|| Duration::from_mins(2));
         let start = Instant::now();
         let mut ticker = interval(Duration::from_secs(5));
         loop {
@@ -206,9 +206,9 @@ impl Package {
 
             // Treat manifest verification failures as fatal so we don't retry
             // for hours on static configuration problems.
-            if stderr
-                .contains("all dependencies must have a version requirement specified when publishing.")
-            {
+            if stderr.contains(
+                "all dependencies must have a version requirement specified when publishing.",
+            ) {
                 eyre::bail!(
                     "command {:?} failed due to manifest verification error: {}",
                     cmd,
@@ -236,10 +236,10 @@ impl Package {
                     match code {
                         http::StatusCode::TOO_MANY_REQUESTS => {
                             // 10 minutes
-                            std::time::Duration::from_secs(10 * 60)
+                            std::time::Duration::from_mins(10)
                         }
                         // 5 minutes
-                        _ => std::time::Duration::from_secs(5 * 60),
+                        _ => std::time::Duration::from_mins(5),
                     }
                 }
                 PublishError::Unknown => {
@@ -249,7 +249,7 @@ impl Package {
                         self.inner.version,
                     );
                     // 5 minutes
-                    std::time::Duration::from_secs(5 * 60)
+                    std::time::Duration::from_mins(5)
                 }
             };
 
@@ -384,6 +384,50 @@ fn find_packages(
     })
 }
 
+fn update_dependency_version(
+    manifest: &mut toml_edit::DocumentMut,
+    package_name: &str,
+    dependency: &cargo_metadata::Dependency,
+    version: &semver::VersionReq,
+) -> eyre::Result<bool> {
+    use toml_edit::value;
+
+    let section = match dependency.kind {
+        DependencyKind::Normal => Some("dependencies"),
+        DependencyKind::Development => Some("dev-dependencies"),
+        DependencyKind::Build => Some("build-dependencies"),
+        _ => None,
+    };
+    let Some(section) = section else {
+        return Ok(false);
+    };
+
+    let manifest_dependency = manifest
+        .get_mut(section)
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .and_then(|dependencies| dependencies.get_mut(&dependency.name))
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "{package_name}: dependency {} is missing from {section}",
+                dependency.name,
+            )
+        })?;
+    {
+        let dependency_table = manifest_dependency.as_table_like_mut().ok_or_else(|| {
+            eyre::eyre!(
+                "{package_name}: dependency {} does not use a detailed manifest entry",
+                dependency.name,
+            )
+        })?;
+        dependency_table.insert("version", value(version.to_string()));
+    }
+    if let Some(inline_table) = manifest_dependency.as_inline_table_mut() {
+        inline_table.fmt();
+    }
+
+    Ok(true)
+}
+
 async fn build_dag(
     packages: &HashMap<PathBuf, Arc<Package>>,
     options: &Options,
@@ -391,7 +435,7 @@ async fn build_dag(
     let packages_iter = packages.values().filter(|p| p.should_publish);
     let results: Vec<_> = stream::iter(packages_iter)
         .map(|p| async move {
-            use toml_edit::{value, DocumentMut};
+            use toml_edit::DocumentMut;
             let manifest_path = &p.inner.manifest_path;
             let manifest = tokio::fs::read_to_string(manifest_path).await?;
             let mut manifest = manifest.parse::<DocumentMut>()?;
@@ -435,20 +479,12 @@ async fn build_dag(
                         let changed = dep_version != dep.req;
                         if changed {
                             // update cargo manifest
-                            let section = match dep.kind {
-                                DependencyKind::Normal => Some("dependencies"),
-                                DependencyKind::Development => Some("dev-dependencies"),
-                                DependencyKind::Build => Some("build-dependencies"),
-                                _ => None,
-                            };
-                            if let Some(section) = section {
-                                manifest[section][&dep.name]["version"] =
-                                    value(dep_version.to_string());
-                                manifest[section][&dep.name]
-                                    .as_inline_table_mut()
-                                    .map(toml_edit::InlineTable::fmt);
-                                need_update = true;
-                            }
+                            need_update |= update_dependency_version(
+                                &mut manifest,
+                                &p.inner.name,
+                                dep,
+                                &dep_version,
+                            )?;
                         }
                     }
 
@@ -513,7 +549,7 @@ async fn update_workspace_dependencies(
     packages: &HashMap<PathBuf, Arc<Package>>,
     options: &Options,
 ) -> eyre::Result<()> {
-    use toml_edit::{value, DocumentMut, Value};
+    use toml_edit::{DocumentMut, Value, value};
 
     // Fast path: nothing to do when resolve_versions is disabled.
     if !options.resolve_versions {
@@ -533,47 +569,48 @@ async fn update_workspace_dependencies(
 
     if let Some(workspace) = manifest.get_mut("workspace")
         && let Some(deps_item) = workspace.get_mut("dependencies")
-            && let Some(table) = deps_item.as_table_mut() {
-                for (name, item) in table.iter_mut() {
-                    // Only consider workspace dependencies that correspond
-                    // to local workspace members.
-                    let dep_name = name.get().to_string();
-                    let Some(pkg) = name_to_pkg.get(&dep_name) else {
-                        continue;
-                    };
+        && let Some(table) = deps_item.as_table_mut()
+    {
+        for (name, item) in table.iter_mut() {
+            // Only consider workspace dependencies that correspond
+            // to local workspace members.
+            let dep_name = name.get().to_string();
+            let Some(pkg) = name_to_pkg.get(&dep_name) else {
+                continue;
+            };
 
-                    // Skip simple string dependencies like `foo = "1"`.
-                    if item.is_str() {
-                        continue;
-                    }
-
-                    // Handle both inline tables and normal tables.
-                    if let Some(inline) = item.as_inline_table_mut() {
-                        let has_path = inline.get("path").is_some();
-                        let has_version = inline.get("version").is_some();
-
-                        if !has_path || has_version {
-                            continue;
-                        }
-
-                        let ver_req = format!("={}", pkg.inner.version);
-                        inline.insert("version", Value::from(ver_req));
-                        inline.fmt();
-                        need_update = true;
-                    } else if let Some(table_item) = item.as_table_mut() {
-                        let has_path = table_item.get("path").is_some();
-                        let has_version = table_item.get("version").is_some();
-
-                        if !has_path || has_version {
-                            continue;
-                        }
-
-                        let ver_req = format!("={}", pkg.inner.version);
-                        table_item["version"] = value(ver_req);
-                        need_update = true;
-                    }
-                }
+            // Skip simple string dependencies like `foo = "1"`.
+            if item.is_str() {
+                continue;
             }
+
+            // Handle both inline tables and normal tables.
+            if let Some(inline) = item.as_inline_table_mut() {
+                let has_path = inline.get("path").is_some();
+                let has_version = inline.get("version").is_some();
+
+                if !has_path || has_version {
+                    continue;
+                }
+
+                let ver_req = format!("={}", pkg.inner.version);
+                inline.insert("version", Value::from(ver_req));
+                inline.fmt();
+                need_update = true;
+            } else if let Some(table_item) = item.as_table_mut() {
+                let has_path = table_item.get("path").is_some();
+                let has_version = table_item.get("version").is_some();
+
+                if !has_path || has_version {
+                    continue;
+                }
+
+                let ver_req = format!("={}", pkg.inner.version);
+                table_item["version"] = value(ver_req);
+                need_update = true;
+            }
+        }
+    }
 
     // Persist changes to the workspace manifest.
     if !options.dry_run && need_update {
@@ -710,12 +747,16 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
 /// Classification of publishing errors.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PublishError {
+    /// An error without a recognized HTTP status code.
     Unknown,
+    /// A transient HTTP error that may succeed when retried.
     Retryable(http::StatusCode),
+    /// An HTTP error that should not be retried.
     Fatal(http::StatusCode),
 }
 
 impl PublishError {
+    /// Returns the recognized HTTP status code, if one was found.
     #[must_use]
     pub fn code(&self) -> Option<&http::StatusCode> {
         match self {
@@ -868,7 +909,8 @@ edition = "2021"
             .unwrap();
 
         // Build a packages map compatible with update_workspace_dependencies.
-        let mut packages = std::collections::HashMap::<PathBuf, std::sync::Arc<super::Package>>::new();
+        let mut packages =
+            std::collections::HashMap::<PathBuf, std::sync::Arc<super::Package>>::new();
         for pkg in metadata.workspace_packages() {
             let path: PathBuf = pkg.manifest_path.parent().unwrap().into();
             packages.insert(
