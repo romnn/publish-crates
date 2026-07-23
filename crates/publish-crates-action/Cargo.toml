@@ -23,6 +23,7 @@ thiserror.workspace = true
 
 # parsing
 duration-string = "0"
+shlex.workspace = true
 
 # github actions
 action-core = { workspace = true, features = ["derive"] }

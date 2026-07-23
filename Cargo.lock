@@ -300,6 +300,8 @@ dependencies = [
  "color-eyre",
  "duration-string",
  "publish-crates",
+ "similar-asserts",
+ "tempfile",
  "tokio",
 ]
 
@@ -1385,6 +1387,7 @@ dependencies = [
  "publish-crates",
  "serde",
  "serde_yaml",
+ "shlex",
  "similar-asserts",
  "thiserror",
  "tokio",

@@ -15,11 +15,11 @@ inputs:
     description: Path to package or workspace
     default: .
   include:
-    description: Packages that should be published
+    description: Comma- or whitespace-separated package names to publish
   exclude:
-    description: Packages that should not be published
+    description: Comma- or whitespace-separated package names not to publish
   extra-args:
-    description: Additional arguments for cargo publish
+    description: Shell-quoted additional arguments for cargo publish
   registry-token:
     description: Cargo registry token (e.g. crates.io)
   dry-run:
@@ -72,5 +72,7 @@ runs:
         INPUT_REGISTRY-TOKEN: ${{ inputs.registry-token }}
         INPUT_DRY-RUN: ${{ inputs.dry-run }}
         INPUT_PUBLISH-DELAY: ${{ inputs.publish-delay }}
+        INPUT_CONCURRENCY-LIMIT: ${{ inputs.concurrency-limit }}
+        INPUT_MAX-RETRIES: ${{ inputs.max-retries }}
         INPUT_NO-VERIFY: ${{ inputs.no-verify }}
         INPUT_RESOLVE-VERSIONS: ${{ inputs.resolve-versions }}

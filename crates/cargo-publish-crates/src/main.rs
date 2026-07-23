@@ -46,6 +46,8 @@ struct Options {
     include: Option<Vec<String>>,
     #[clap(long = "exclude", env = format!("{ENV_PREFIX}_EXCLUDE_PACKAGES"))]
     exclude: Option<Vec<String>>,
+    #[clap(last = true, value_name = "CARGO_PUBLISH_ARGS")]
+    extra_args: Vec<String>,
 }
 
 impl TryFrom<Options> for publish::Options {
@@ -75,6 +77,7 @@ impl TryFrom<Options> for publish::Options {
             resolve_versions: options.resolve_versions,
             include: options.include,
             exclude: options.exclude,
+            extra_args: options.extra_args,
         })
     }
 }
@@ -86,4 +89,63 @@ async fn main() -> eyre::Result<()> {
     let options: publish::Options = Options::parse().try_into()?;
     publish::publish(options).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Options;
+    use clap::Parser;
+    use similar_asserts::assert_eq as sim_assert_eq;
+
+    #[test]
+    fn parses_selection_and_cargo_arguments() {
+        let options = Options::try_parse_from([
+            "cargo-publish-crates",
+            "--dry-run",
+            "--include",
+            "core",
+            "--exclude",
+            "internal",
+            "--",
+            "--registry",
+            "private",
+        ])
+        .expect("arguments must parse");
+
+        sim_assert_eq!(options.include, Some(vec!["core".to_string()]));
+        sim_assert_eq!(options.exclude, Some(vec!["internal".to_string()]));
+        sim_assert_eq!(
+            options.extra_args,
+            vec!["--registry".to_string(), "private".to_string()]
+        );
+        assert!(options.dry_run);
+    }
+
+    #[test]
+    fn converts_directory_and_manifest_paths() {
+        let temp = tempfile::tempdir().expect("temporary directory must be created");
+        let manifest = temp.path().join("Cargo.toml");
+        std::fs::write(&manifest, "[workspace]\n").expect("temporary manifest must be writable");
+
+        let directory_options = Options::try_parse_from([
+            "cargo-publish-crates",
+            "--path",
+            temp.path().to_str().expect("temporary path must be UTF-8"),
+        ])
+        .expect("directory arguments must parse");
+        let directory_options =
+            publish_crates::Options::try_from(directory_options).expect("current directory exists");
+
+        let manifest_options = Options::try_parse_from([
+            "cargo-publish-crates",
+            "--path",
+            manifest.to_str().expect("manifest path must be UTF-8"),
+        ])
+        .expect("manifest arguments must parse");
+        let manifest_options =
+            publish_crates::Options::try_from(manifest_options).expect("current directory exists");
+
+        sim_assert_eq!(directory_options.path, manifest);
+        sim_assert_eq!(manifest_options.path, manifest);
+    }
 }

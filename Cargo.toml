@@ -38,10 +38,12 @@ parking_lot = "0"
 
 # github actions
 action-core = "0"
+shlex = "1"
 
 # testing
 similar-asserts = "2.0.0"
 itertools = "0"
+tempfile = "3"
 
 [workspace.lints.rust]
 warnings = { level = "warn", priority = -1 }

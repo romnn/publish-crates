@@ -6,6 +6,24 @@ use publish_crates::{Options, publish};
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+fn parse_package_names(value: Option<String>) -> Option<Vec<String>> {
+    let packages = value?
+        .split([',', ' ', '\t', '\n', '\r'])
+        .filter(|package| !package.is_empty())
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    (!packages.is_empty()).then_some(packages)
+}
+
+fn parse_extra_args(value: Option<String>) -> eyre::Result<Vec<String>> {
+    value.map_or_else(
+        || Ok(Vec::new()),
+        |args| {
+            shlex::split(&args).ok_or_else(|| eyre::eyre!("extra-args contains unmatched quotes"))
+        },
+    )
+}
+
 struct Duration(std::time::Duration);
 
 impl From<Duration> for std::time::Duration {
@@ -79,8 +97,12 @@ async fn run() -> eyre::Result<()> {
         .wrap_err("invalid value for option resolve-versions")?
         .unwrap_or(false);
 
-    action::info!("include: {:?}", PublishCratesAction::include::<String>());
-    action::info!("exclude: {:?}", PublishCratesAction::exclude::<String>());
+    let include = parse_package_names(PublishCratesAction::include::<String>()?);
+    let exclude = parse_package_names(PublishCratesAction::exclude::<String>()?);
+    let extra_args = parse_extra_args(PublishCratesAction::extra_args::<String>()?)?;
+
+    action::info!("include: {include:?}");
+    action::info!("exclude: {exclude:?}");
 
     let options = Options {
         path,
@@ -91,8 +113,9 @@ async fn run() -> eyre::Result<()> {
         concurrency_limit,
         no_verify,
         resolve_versions,
-        include: None,
-        exclude: None,
+        include,
+        exclude,
+        extra_args,
     };
     publish(options).await?;
     Ok(())
@@ -107,7 +130,9 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{PublishCratesAction, PublishCratesActionInput};
+    use super::{
+        PublishCratesAction, PublishCratesActionInput, parse_extra_args, parse_package_names,
+    };
     use action_core::{self as action, Parse, input};
     use color_eyre::eyre;
     use indoc::indoc;
@@ -123,7 +148,7 @@ mod tests {
     }
 
     #[test]
-    fn test_common_config() -> eyre::Result<()> {
+    fn action_schema_applies_defaults_and_overrides() -> eyre::Result<()> {
         use input::SetInput;
         use std::collections::HashMap;
 
@@ -193,14 +218,85 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_duration() {
+    fn action_forwards_every_publishing_input() -> eyre::Result<()> {
+        let action =
+            serde_yaml::from_str::<serde_yaml::Value>(include_str!("../../../action.yml"))?;
+        let publish_step = action
+            .get("runs")
+            .and_then(|runs| runs.get("steps"))
+            .and_then(serde_yaml::Value::as_sequence)
+            .and_then(|steps| {
+                steps.iter().find(|step| {
+                    step.get("name").and_then(serde_yaml::Value::as_str) == Some("Publish crates")
+                })
+            })
+            .ok_or_else(|| eyre::eyre!("publish step is missing"))?;
+        let forwarded = publish_step
+            .get("env")
+            .and_then(serde_yaml::Value::as_mapping)
+            .ok_or_else(|| eyre::eyre!("publish step environment is missing"))?;
+        let expected = serde_yaml::from_str::<serde_yaml::Mapping>(indoc! {"
+            INPUT_TOKEN: ${{ inputs.token }}
+            INPUT_PATH: ${{ inputs.path }}
+            INPUT_INCLUDE: ${{ inputs.include }}
+            INPUT_EXCLUDE: ${{ inputs.exclude }}
+            INPUT_EXTRA-ARGS: ${{ inputs.extra-args }}
+            INPUT_REGISTRY-TOKEN: ${{ inputs.registry-token }}
+            INPUT_DRY-RUN: ${{ inputs.dry-run }}
+            INPUT_PUBLISH-DELAY: ${{ inputs.publish-delay }}
+            INPUT_CONCURRENCY-LIMIT: ${{ inputs.concurrency-limit }}
+            INPUT_MAX-RETRIES: ${{ inputs.max-retries }}
+            INPUT_NO-VERIFY: ${{ inputs.no-verify }}
+            INPUT_RESOLVE-VERSIONS: ${{ inputs.resolve-versions }}
+        "})?;
+
+        sim_assert_eq!(forwarded, &expected);
+        Ok(())
+    }
+
+    #[test]
+    fn duration_parser_is_case_insensitive() {
         sim_assert_eq!(parse_duration("30s"), Some(Duration::from_secs(30)));
         sim_assert_eq!(parse_duration("30S"), Some(Duration::from_secs(30)));
         sim_assert_eq!(parse_duration("20m"), Some(Duration::from_mins(20)));
-        // todo: fix this?
-        // assert_eq!(
-        //     parse_duration_string("1m30s").ok(),
-        //     Some(Duration::from_secs(1 * 60 + 30))
-        // );
+        sim_assert_eq!(parse_duration("1m30s"), Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn package_names_accept_commas_and_whitespace() {
+        sim_assert_eq!(
+            parse_package_names(Some("core, cli\naction".to_string())),
+            Some(vec![
+                "core".to_string(),
+                "cli".to_string(),
+                "action".to_string()
+            ])
+        );
+        sim_assert_eq!(parse_package_names(Some(" , \t".to_string())), None);
+        sim_assert_eq!(parse_package_names(None), None);
+    }
+
+    #[test]
+    fn extra_args_preserve_quoted_values() -> eyre::Result<()> {
+        sim_assert_eq!(
+            parse_extra_args(Some(
+                "--registry private --config 'net.retry = 2'".to_string()
+            ))?,
+            vec![
+                "--registry".to_string(),
+                "private".to_string(),
+                "--config".to_string(),
+                "net.retry = 2".to_string()
+            ]
+        );
+        sim_assert_eq!(parse_extra_args(None)?, Vec::<String>::new());
+        Ok(())
+    }
+
+    #[test]
+    fn extra_args_reject_unmatched_quotes() {
+        let error = parse_extra_args(Some("'unfinished".to_string()))
+            .expect_err("unmatched quotes must be rejected");
+        sim_assert_eq!(error.to_string(), "extra-args contains unmatched quotes");
     }
 }

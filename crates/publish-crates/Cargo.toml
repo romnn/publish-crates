@@ -56,4 +56,4 @@ http = "1"
 
 [dev-dependencies]
 similar-asserts.workspace = true
-tempfile = "3"
+tempfile.workspace = true

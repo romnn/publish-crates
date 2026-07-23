@@ -42,3 +42,7 @@ duration-string = "0"
 tokio = { version = "1", features = ["full"] }
 
 publish-crates = { path = "../publish-crates/" }
+
+[dev-dependencies]
+similar-asserts.workspace = true
+tempfile.workspace = true

@@ -1,4 +1,33 @@
 //! Publishes interdependent Cargo workspace packages in dependency order.
+//!
+//! The crate discovers workspace members with Cargo metadata, resolves local dependency order, and
+//! runs `cargo publish` concurrently for packages whose dependencies are available.
+//!
+//! # Examples
+//!
+//! ```no_run
+//! # // Uses `no_run` because publishing requires a Cargo workspace and registry access.
+//! # async fn example() -> color_eyre::eyre::Result<()> {
+//! use publish_crates::{Options, publish};
+//! use std::path::PathBuf;
+//!
+//! publish(Options {
+//!     path: PathBuf::from("Cargo.toml"),
+//!     registry_token: None,
+//!     dry_run: true,
+//!     publish_delay: None,
+//!     no_verify: false,
+//!     resolve_versions: false,
+//!     include: None,
+//!     exclude: None,
+//!     max_retries: None,
+//!     concurrency_limit: Some(4),
+//!     extra_args: Vec::new(),
+//! })
+//! .await?;
+//! # Ok(())
+//! # }
+//! ```
 
 use action_core as action;
 use cargo_metadata::DependencyKind;
@@ -6,7 +35,7 @@ use color_eyre::{Section, eyre};
 use futures::Future;
 use futures::stream::{self, FuturesUnordered, StreamExt};
 use parking_lot::{Mutex, RwLock};
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -16,56 +45,76 @@ use tokio::time::{Duration, Instant, interval, sleep};
 const DATETIME_FORMAT: &[time::format_description::BorrowedFormatItem<'static>] =
     time::macros::format_description!("[hour]:[minute]:[second]");
 
-/// Options for publishing packages.
+/// Configures workspace package selection and publishing behavior.
 #[derive(Debug)]
 pub struct Options {
-    /// Path to package or workspace
+    /// Path to a package or workspace directory, or directly to its `Cargo.toml`.
     pub path: PathBuf,
 
-    /// Cargo registry token
+    /// Registry token passed to Cargo as `CARGO_REGISTRY_TOKEN`.
+    ///
+    /// A value of [`None`] leaves Cargo's existing credentials and environment unchanged.
     pub registry_token: Option<String>,
 
-    /// Perform dry-run
-    /// This will perform all checks without publishing the package
+    /// Runs Cargo's publishing checks without uploading packages.
+    ///
+    /// Manifests are not modified in this mode. When [`Self::resolve_versions`] is enabled for a
+    /// package with local dependencies, Cargo's dry-run is skipped because the resolved versions
+    /// exist only in memory.
     pub dry_run: bool,
 
-    /// Delay before attempting to publish dependent crate
+    /// Delay after a package becomes available before publishing its dependants.
+    ///
+    /// A value of [`None`] uses 30 seconds. The delay is not applied during a dry-run.
     pub publish_delay: Option<Duration>,
 
-    /// Disable pre-publish validation checks
+    /// Passes `--no-verify` to `cargo publish`.
     pub no_verify: bool,
 
-    /// Resolve missing versions for local packages.
+    /// Replaces local path dependency requirements with exact workspace package versions.
     ///
-    /// Versions of local packages that use `{ path = "../some/path" }`
-    /// will be resolved to the version of the package the `path` is pointing to.
-    /// Note that even if `version` is present, the resolved value will be used.
+    /// A local dependency such as `{ path = "../some/path" }` receives the version of the package
+    /// at that path. Existing version requirements are also replaced.
     ///
-    /// **Note**: This will update your `Cargo.toml` manifest with the resolved version.
+    /// Unless [`Self::dry_run`] is enabled, this updates affected Cargo manifests.
     pub resolve_versions: bool,
 
-    /// Packages that should be published
+    /// Workspace package names eligible for publishing.
     ///
-    /// If using explicit include, specify all package names you wish to publish
+    /// [`None`] or an empty list includes every publishable workspace package.
     pub include: Option<Vec<String>>,
 
-    /// Packages that should not be published
+    /// Workspace package names excluded from publishing.
     ///
-    /// Excluded package names have precedence over included package names.
+    /// Exclusion takes precedence over [`Self::include`].
     pub exclude: Option<Vec<String>>,
 
-    /// Maximum number of retries when encountering intermittent errors.
+    /// Maximum retries after the initial attempt for an intermittent publishing error.
     ///
-    /// Common intermittent failures are:
-    /// - 500 Internal Server Error
-    /// - 429 Too Many Requests
+    /// [`None`] uses twice the number of discovered workspace packages.
     pub max_retries: Option<usize>,
 
     /// Maximum number of packages to publish concurrently.
+    ///
+    /// [`None`] uses four. A value of zero is invalid.
     pub concurrency_limit: Option<usize>,
+
+    /// Additional arguments passed to every `cargo publish` invocation.
+    ///
+    /// Each element is passed as one argument, without shell interpretation.
+    pub extra_args: Vec<String>,
 }
 
-/// A cargo package.
+impl Options {
+    fn validate(&self) -> eyre::Result<()> {
+        if self.concurrency_limit == Some(0) {
+            eyre::bail!("concurrency limit must be greater than zero");
+        }
+        Ok(())
+    }
+}
+
+/// Tracks publishing state and local dependency edges for a Cargo package.
 struct Package {
     inner: cargo_metadata::Package,
     path: PathBuf,
@@ -101,14 +150,14 @@ impl Package {
         *self.published.lock()
     }
 
-    /// Checks if the package is ready for publishing.
+    /// Checks whether the package is ready for publishing.
     ///
     /// A package can be published if all its dependencies have been published.
     pub fn ready(&self) -> bool {
         self.deps.read().values().all(|d| d.published())
     }
 
-    /// Wait until the published package is available on the registry.
+    /// Checks whether this package version is downloadable from crates.io.
     pub async fn is_available(&self) -> eyre::Result<bool> {
         use crates_io_api::{AsyncClient, Error as RegistryError};
         use semver::Version;
@@ -143,7 +192,7 @@ impl Package {
         Ok(dl_response.status() == reqwest::StatusCode::OK)
     }
 
-    /// Wait until the published package is available on the registry.
+    /// Waits until the published package is available on the registry.
     pub async fn wait_package_available(
         &self,
         timeout: impl Into<Option<Duration>>,
@@ -161,7 +210,7 @@ impl Package {
             if self.is_available().await? {
                 return Ok(());
             }
-            // check for timeout
+            // Check the timeout after every registry probe.
             if Instant::now().duration_since(start) > timeout {
                 eyre::bail!(
                     "exceeded timeout of {:?} waiting for crate {} {} to be published",
@@ -188,7 +237,7 @@ impl Package {
                     self.inner.name,
                     self.inner.version,
                     attempt,
-                    max_retries
+                    max_retries.saturating_add(1)
                 );
             }
 
@@ -235,10 +284,10 @@ impl Package {
                     );
                     match code {
                         http::StatusCode::TOO_MANY_REQUESTS => {
-                            // 10 minutes
+                            // Rate limits back off for ten minutes to respect registry throttling.
                             std::time::Duration::from_mins(10)
                         }
-                        // 5 minutes
+                        // Other retryable failures use a five-minute backoff.
                         _ => std::time::Duration::from_mins(5),
                     }
                 }
@@ -248,12 +297,12 @@ impl Package {
                         self.inner.name,
                         self.inner.version,
                     );
-                    // 5 minutes
+                    // Unknown failures use a five-minute backoff before another attempt.
                     std::time::Duration::from_mins(5)
                 }
             };
 
-            if attempt >= max_retries {
+            if attempt > max_retries {
                 eyre::bail!("command {:?} failed: {}", cmd, stderr);
             }
 
@@ -270,7 +319,7 @@ impl Package {
         }
     }
 
-    /// Publishes this package
+    /// Publishes this package after all local dependencies are available.
     pub async fn publish(self: Arc<Self>, options: Arc<Options>) -> eyre::Result<Arc<Self>> {
         use async_process::Command;
 
@@ -288,11 +337,9 @@ impl Package {
         }
         if options.dry_run {
             cmd.arg("--dry-run");
-            // skip checking if local package versions are available on crates.io as they are not
-            // published during dry-run
+            // Local package versions are unavailable on crates.io during a dry-run.
             if options.resolve_versions && !self.deps.read().is_empty() {
-                // cmd.arg("--offline");
-                // skip cargo dry-run as it will always fail
+                // Skip Cargo's dry-run because its dependency lookup would always fail.
                 action::info!(
                     "[{}@{}] dry-run: proceed without `cargo publish --dry-run` due to resolve version incompatibility",
                     self.inner.name,
@@ -303,9 +350,10 @@ impl Package {
             }
         }
         if options.resolve_versions {
-            // when resolving versions, we may write to Cargo.toml
+            // Resolved versions intentionally modify Cargo.toml before publishing.
             cmd.arg("--allow-dirty");
         }
+        cmd.args(&options.extra_args);
 
         let max_retries = options.max_retries.unwrap_or(10);
         self.attempt_publish(cmd, max_retries).await?;
@@ -320,7 +368,7 @@ impl Package {
             return Ok(self);
         }
 
-        // wait for package to be available on the registry
+        // Dependants can publish only after the registry serves this exact version.
         self.wait_package_available(None).await?;
 
         let publish_delay = options
@@ -402,21 +450,18 @@ fn update_dependency_version(
         return Ok(false);
     };
 
+    let dependency_key = dependency.rename.as_deref().unwrap_or(&dependency.name);
     let manifest_dependency = manifest
         .get_mut(section)
         .and_then(toml_edit::Item::as_table_like_mut)
-        .and_then(|dependencies| dependencies.get_mut(&dependency.name))
+        .and_then(|dependencies| dependencies.get_mut(dependency_key))
         .ok_or_else(|| {
-            eyre::eyre!(
-                "{package_name}: dependency {} is missing from {section}",
-                dependency.name,
-            )
+            eyre::eyre!("{package_name}: dependency {dependency_key} is missing from {section}",)
         })?;
     {
         let dependency_table = manifest_dependency.as_table_like_mut().ok_or_else(|| {
             eyre::eyre!(
-                "{package_name}: dependency {} does not use a detailed manifest entry",
-                dependency.name,
+                "{package_name}: dependency {dependency_key} does not use a detailed manifest entry",
             )
         })?;
         dependency_table.insert("version", value(version.to_string()));
@@ -444,18 +489,21 @@ async fn build_dag(
             for dep in &p.inner.dependencies {
                 let mut dep_version = dep.req.clone();
                 if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
-                    // also if the version is set, we want to resolve automatically?
-                    // OR we allow changing and always set allow-dirty
-                    // dep_version == semver::VersionReq::STAR &&
+                    // Cargo omits path-only development dependencies from published manifests.
+                    if dep.kind == DependencyKind::Development
+                        && dep.req == semver::VersionReq::STAR
+                    {
+                        continue;
+                    }
+
+                    // Resolve every local dependency, even if it already has a version requirement.
                     let resolved = packages.get(&path).ok_or(eyre::eyre!(
                         "{}: could not resolve local dependency {}",
                         &p.inner.name,
                         path.display()
                     ))?;
 
-                    // ensure that all local dependencies for a package
-                    // that should be published are also going to
-                    // be published
+                    // A published package cannot depend on a local package excluded from this run.
                     if !resolved.should_publish {
                         eyre::bail!(
                             "{}: cannot publish because dependency {} will not be published",
@@ -465,7 +513,7 @@ async fn build_dag(
                     }
 
                     if options.resolve_versions {
-                        // use version from the manifest the path points to
+                        // Use the version declared by the package at the dependency path.
                         dep_version = semver::VersionReq {
                             comparators: vec![semver::Comparator {
                                 op: semver::Op::Exact,
@@ -478,7 +526,7 @@ async fn build_dag(
 
                         let changed = dep_version != dep.req;
                         if changed {
-                            // update cargo manifest
+                            // Keep the manifest aligned with the graph used for publishing.
                             need_update |= update_dependency_version(
                                 &mut manifest,
                                 &p.inner.name,
@@ -512,7 +560,7 @@ async fn build_dag(
                 }
             }
 
-            // write updated cargo manifest
+            // Dry-runs validate the edits in memory without modifying the checkout.
             if !options.dry_run && need_update {
                 use tokio::io::AsyncWriteExt;
                 action::debug!("{}", &manifest.to_string());
@@ -523,6 +571,7 @@ async fn build_dag(
                     .open(&p.inner.manifest_path)
                     .await?;
                 f.write_all(manifest.to_string().as_bytes()).await?;
+                f.flush().await?;
             }
 
             Ok(())
@@ -531,13 +580,12 @@ async fn build_dag(
         .collect()
         .await;
 
-    // fail on error
+    // Report any package error only after the bounded concurrent validation finishes.
     results.into_iter().collect::<eyre::Result<Vec<_>>>()?;
     Ok(())
 }
 
-/// Update versions in `[workspace.dependencies]` for local path dependencies
-/// when `--resolve-versions` is enabled.
+/// Updates local path dependency versions in `[workspace.dependencies]`.
 ///
 /// This is required for newer Cargo versions which enforce that any
 /// published dependency that has a `path` also specifies an explicit
@@ -548,12 +596,12 @@ async fn update_workspace_dependencies(
     metadata: &cargo_metadata::Metadata,
     packages: &HashMap<PathBuf, Arc<Package>>,
     options: &Options,
-) -> eyre::Result<()> {
-    use toml_edit::{DocumentMut, Value, value};
+) -> eyre::Result<bool> {
+    use toml_edit::{DocumentMut, Item, Value, value};
 
     // Fast path: nothing to do when resolve_versions is disabled.
     if !options.resolve_versions {
-        return Ok(());
+        return Ok(false);
     }
 
     let workspace_manifest_path = metadata.workspace_root.join("Cargo.toml");
@@ -561,11 +609,23 @@ async fn update_workspace_dependencies(
     let mut manifest = manifest.parse::<DocumentMut>()?;
     let mut need_update = false;
 
-    // Build an index from crate name to package for quick lookup.
+    // Index package names once because every workspace dependency may need a lookup.
     let mut name_to_pkg: HashMap<String, &Arc<Package>> = HashMap::new();
     for pkg in packages.values() {
         name_to_pkg.insert(pkg.inner.name.to_string(), pkg);
     }
+
+    let required_versions = packages
+        .values()
+        .filter(|package| package.should_publish)
+        .flat_map(|package| &package.inner.dependencies)
+        .filter(|dependency| {
+            dependency.path.is_some()
+                && (dependency.kind != DependencyKind::Development
+                    || dependency.req != semver::VersionReq::STAR)
+        })
+        .map(|dependency| dependency.name.as_str())
+        .collect::<HashSet<_>>();
 
     if let Some(workspace) = manifest.get_mut("workspace")
         && let Some(deps_item) = workspace.get_mut("dependencies")
@@ -575,9 +635,23 @@ async fn update_workspace_dependencies(
             // Only consider workspace dependencies that correspond
             // to local workspace members.
             let dep_name = name.get().to_string();
-            let Some(pkg) = name_to_pkg.get(&dep_name) else {
+            let package_name = item
+                .as_inline_table()
+                .and_then(|dependency| dependency.get("package"))
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    item.as_table()
+                        .and_then(|dependency| dependency.get("package"))
+                        .and_then(Item::as_str)
+                })
+                .unwrap_or(&dep_name)
+                .to_string();
+            let Some(pkg) = name_to_pkg.get(&package_name) else {
                 continue;
             };
+            if !required_versions.contains(package_name.as_str()) {
+                continue;
+            }
 
             // Skip simple string dependencies like `foo = "1"`.
             if item.is_str() {
@@ -626,16 +700,25 @@ async fn update_workspace_dependencies(
             .open(&workspace_manifest_path)
             .await?;
         f.write_all(manifest.to_string().as_bytes()).await?;
+        f.flush().await?;
     }
 
-    Ok(())
+    Ok(need_update)
 }
 
-/// Publishes packages of a project on crates.io.
+/// Publishes selected workspace packages to crates.io in dependency order.
+///
+/// Local path dependencies form the publishing graph. Independent packages run concurrently up to
+/// [`Options::concurrency_limit`], while each dependant waits for its dependencies to appear on the
+/// registry.
 ///
 /// # Errors
-/// If any package cannot be published.
+///
+/// Returns an error when the options or Cargo metadata are invalid, dependency versions cannot be
+/// resolved, a selected package depends on an excluded package, `cargo publish` fails permanently,
+/// or a published package does not become available before the registry timeout.
 pub async fn publish(mut options: Options) -> eyre::Result<()> {
+    options.validate()?;
     action::info!("searching cargo packages at {}", options.path.display());
 
     let manifest_path = if options.path.is_file() {
@@ -643,14 +726,21 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
     } else {
         options.path.join("Cargo.toml")
     };
-    let metadata = cargo_metadata::MetadataCommand::new()
+    let mut metadata = cargo_metadata::MetadataCommand::new()
         .manifest_path(&manifest_path)
         .exec()?;
 
-    let packages: HashMap<PathBuf, Arc<Package>> = find_packages(&metadata, &options).collect();
+    let mut packages: HashMap<PathBuf, Arc<Package>> = find_packages(&metadata, &options).collect();
     // For workspaces using `[workspace.dependencies]`, ensure local path
     // dependencies have explicit versions before we start publishing.
-    update_workspace_dependencies(&metadata, &packages, &options).await?;
+    let workspace_changed = update_workspace_dependencies(&metadata, &packages, &options).await?;
+    if workspace_changed && !options.dry_run {
+        // Cargo metadata retains the old requirements, so reload it after manifest mutation.
+        metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&manifest_path)
+            .exec()?;
+        packages = find_packages(&metadata, &options).collect();
+    }
     build_dag(&packages, &options).await?;
 
     action::info!(
@@ -665,7 +755,7 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
     let options = Arc::new(options);
 
     if packages.is_empty() {
-        // fast path: nothing to do here
+        // Fast path: nothing to publish.
         return Ok(());
     }
     let mut ready: VecDeque<Arc<Package>> =
@@ -677,18 +767,18 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
     let limit = Arc::new(Semaphore::new(limit));
 
     loop {
-        // check if we are done
+        // Completion
         if tasks.is_empty() && ready.is_empty() {
             break;
         }
 
-        // start running ready tasks
+        // Ready packages
         loop {
-            // acquire permit
+            // Concurrency slot
             let Ok(permit) = limit.clone().try_acquire_owned() else {
                 break;
             };
-            // check if we can publish
+            // Package selection
             match ready.pop_front() {
                 Some(p) if !p.should_publish => {
                     action::info!(
@@ -703,24 +793,24 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
                         Box::pin(async move {
                             let res = p.publish(options).await;
 
-                            // release permit
+                            // Release the concurrency slot before reporting completion.
                             drop(permit);
                             res
                         })
                     });
                 }
-                // no more tasks
+                // No ready packages
                 None => break,
             }
         }
 
-        // wait for a task to complete
+        // Completed package
         match tasks.next().await {
             Some(Err(err)) => {
                 eyre::bail!("a task failed: {}", err)
             }
             Some(Ok(completed)) => {
-                // update ready tasks
+                // Newly unblocked dependants
                 ready.extend(
                     completed
                         .dependants
@@ -766,15 +856,16 @@ impl PublishError {
     }
 }
 
-/// Classify publish errors based on the error message.
+/// Classifies a `cargo publish` error from HTTP status text.
 ///
 /// This approach assumes that the error messages of `cargo publish` include network errors
 /// in the form `<code> <canonical_reason>`.
 ///
-/// # Returns:
-/// - `Retryable(code)` if a temporary / intermittent error was detected
-/// - `Fatal(code)` if a fatal network error was detected (such as missing permissions)
-/// - `Unknown` otherwise
+/// Classification:
+///
+/// - [`PublishError::Retryable`] for temporary or intermittent errors.
+/// - [`PublishError::Fatal`] for permanent errors such as missing permissions.
+/// - [`PublishError::Unknown`] when no recognized status text is present.
 fn classify_publish_error(text: &str) -> PublishError {
     for code_num in 100u16..=599 {
         let Ok(code) = http::StatusCode::from_u16(code_num) else {
@@ -804,7 +895,6 @@ fn classify_publish_error(text: &str) -> PublishError {
                 || code == http::StatusCode::PRECONDITION_REQUIRED
                 || code == http::StatusCode::TOO_MANY_REQUESTS
                 || code == http::StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS
-                || code == http::StatusCode::UNAVAILABLE_FOR_LEGAL_REASONS
             {
                 return PublishError::Retryable(code);
             }
@@ -817,47 +907,303 @@ fn classify_publish_error(text: &str) -> PublishError {
 
 #[cfg(test)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use similar_asserts::assert_eq as sim_assert_eq;
 
+    fn options(path: PathBuf) -> super::Options {
+        super::Options {
+            path,
+            registry_token: None,
+            dry_run: false,
+            publish_delay: None,
+            no_verify: false,
+            resolve_versions: false,
+            include: None,
+            exclude: None,
+            max_retries: None,
+            concurrency_limit: None,
+            extra_args: Vec::new(),
+        }
+    }
+
+    fn write_member(workspace: &Path, name: &str, manifest_suffix: &str) {
+        let package_dir = workspace.join("crates").join(name);
+        std::fs::create_dir_all(package_dir.join("src"))
+            .expect("package source directory must be created");
+        std::fs::write(
+            package_dir.join("Cargo.toml"),
+            format!(
+                r#"[package]
+name = "{name}"
+version = "1.2.3"
+edition = "2021"
+
+{manifest_suffix}"#
+            ),
+        )
+        .expect("package manifest must be written");
+        // Add a minimal lib target so Cargo considers this crate valid.
+        std::fs::write(package_dir.join("src/lib.rs"), "").expect("package source must be written");
+    }
+
+    fn package_map(
+        metadata: &cargo_metadata::Metadata,
+        options: &super::Options,
+    ) -> std::collections::HashMap<PathBuf, std::sync::Arc<super::Package>> {
+        super::find_packages(metadata, options).collect()
+    }
+
     #[test]
-    fn classify_publish_error() {
-        sim_assert_eq!(
-            super::classify_publish_error(
-                "the remote server responded with an error (status 429 Too Many Requests): You have published too many new crates in a short period of time. Please try again after Mon, 21 Apr 2025 19:31:32 GMT or email help@crates.io to have your limit increased."
+    fn classifies_retryable_fatal_and_unknown_publish_errors() {
+        let cases = [
+            (
+                "the remote server responded with 429 Too Many Requests",
+                super::PublishError::Retryable(http::StatusCode::TOO_MANY_REQUESTS),
             ),
-            super::PublishError::Retryable(http::StatusCode::TOO_MANY_REQUESTS)
-        );
+            (
+                "the remote server responded with 500 Internal Server Error",
+                super::PublishError::Retryable(http::StatusCode::INTERNAL_SERVER_ERROR),
+            ),
+            (
+                "the remote server responded with 403 Forbidden",
+                super::PublishError::Fatal(http::StatusCode::FORBIDDEN),
+            ),
+            (
+                "the remote server responded with an unknown error",
+                super::PublishError::Unknown,
+            ),
+        ];
+
+        for (message, expected) in cases {
+            let error = super::classify_publish_error(message);
+            sim_assert_eq!(error, expected);
+            sim_assert_eq!(error.code(), expected.code());
+        }
+    }
+
+    #[test]
+    fn rejects_zero_concurrency_limit() {
+        let mut options = options(PathBuf::from("Cargo.toml"));
+        options.concurrency_limit = Some(0);
+
+        let error = options
+            .validate()
+            .expect_err("zero concurrency must be rejected");
 
         sim_assert_eq!(
-            super::classify_publish_error(
-                "the remote server responded with an error (status 500 Internal Server Error): Internal Server Error"
-            ),
-            super::PublishError::Retryable(http::StatusCode::INTERNAL_SERVER_ERROR)
-        );
-
-        sim_assert_eq!(
-            super::classify_publish_error(
-                "the remote server responded with some error we don't know more about"
-            ),
-            super::PublishError::Unknown,
+            error.to_string(),
+            "concurrency limit must be greater than zero"
         );
     }
 
+    #[test]
+    fn package_selection_applies_exclusions_after_inclusions() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/foo", "crates/bar"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "foo", "");
+        write_member(temp.path(), "bar", "");
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.include = Some(vec!["foo".to_string(), "bar".to_string()]);
+        options.exclude = Some(vec!["bar".to_string()]);
+
+        let selected = package_map(&metadata, &options)
+            .values()
+            .map(|package| (package.inner.name.to_string(), package.should_publish))
+            .collect::<std::collections::HashMap<_, _>>();
+
+        sim_assert_eq!(selected.get("foo"), Some(&true));
+        sim_assert_eq!(selected.get("bar"), Some(&false));
+    }
+
+    /// Verifies renamed local dependencies are updated at their manifest key.
+    #[tokio::test]
+    async fn build_dag_resolves_renamed_local_dependency() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/foo", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "foo", "");
+        write_member(
+            temp.path(),
+            "consumer",
+            r#"[dependencies]
+renamed = { package = "foo", path = "../foo" }
+"#,
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        super::build_dag(&packages, &options)
+            .await
+            .expect("dependency graph must resolve");
+
+        let manifest = std::fs::read_to_string(
+            temp.path()
+                .join("crates")
+                .join("consumer")
+                .join("Cargo.toml"),
+        )
+        .expect("consumer manifest must be readable")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("consumer manifest must remain valid TOML");
+        let renamed = manifest
+            .get("dependencies")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|dependencies| dependencies.get("renamed"))
+            .and_then(toml_edit::Item::as_table_like)
+            .expect("renamed dependency must remain a detailed entry");
+        sim_assert_eq!(
+            renamed.get("version").and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
+        );
+        sim_assert_eq!(
+            renamed.get("package").and_then(toml_edit::Item::as_str),
+            Some("foo")
+        );
+    }
+
+    /// Keeps path-only development dependencies private during publication.
+    #[tokio::test]
+    async fn path_only_dev_dependency_is_omitted_from_publish_graph() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/test-support", "crates/consumer"]
+resolver = "2"
+
+[workspace.dependencies]
+test-support = { path = "crates/test-support" }
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "test-support", "publish = false\n");
+        write_member(
+            temp.path(),
+            "consumer",
+            r"[dev-dependencies]
+test-support.workspace = true
+",
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path.clone());
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
+            .await
+            .expect("private development dependencies must not require versions");
+        super::build_dag(&packages, &options)
+            .await
+            .expect("private development dependencies must not block publication");
+
+        sim_assert_eq!(changed, false);
+        let consumer = packages
+            .values()
+            .find(|package| package.inner.name == "consumer")
+            .expect("consumer package must be present");
+        sim_assert_eq!(consumer.deps.read().len(), 0);
+        let manifest = std::fs::read_to_string(workspace_manifest_path)
+            .expect("workspace manifest must be readable")
+            .parse::<toml_edit::DocumentMut>()
+            .expect("workspace manifest must remain valid TOML");
+        let test_support = manifest
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(|dependencies| dependencies.get("test-support"))
+            .expect("test support dependency must remain present");
+        sim_assert_eq!(
+            test_support
+                .get("version")
+                .and_then(toml_edit::Item::as_str),
+            None
+        );
+    }
+
+    /// Rejects private local packages used as production dependencies.
+    #[tokio::test]
+    async fn private_normal_dependency_is_rejected() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/private-lib", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "private-lib", "publish = false\n");
+        write_member(
+            temp.path(),
+            "consumer",
+            r#"[dependencies]
+private-lib = { path = "../private-lib" }
+"#,
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let options = options(workspace_manifest_path);
+        let packages = package_map(&metadata, &options);
+
+        let error = super::build_dag(&packages, &options)
+            .await
+            .expect_err("private production dependencies must prevent publication");
+
+        sim_assert_eq!(
+            error.to_string(),
+            "consumer: cannot publish because dependency private-lib will not be published"
+        );
+    }
+
+    /// Verifies workspace-level path dependencies are resolved without changing unrelated entries.
     #[tokio::test]
     async fn update_workspace_dependencies_adds_versions_for_local_path_deps() {
-        use std::path::PathBuf;
-
         // Synthetic workspace manifest with a path-only workspace dependency
         // and a normal crates.io dependency that should be left untouched.
         let workspace_manifest = r#"
 [workspace]
-members = ["crates/foo", "crates/bar"]
+members = ["crates/foo", "crates/bar", "crates/consumer"]
 
 [workspace.package]
 version = "1.2.3"
 
 [workspace.dependencies]
-foo = { path = "crates/foo" }
+foo-alias = { package = "foo", path = "crates/foo" }
 serde = "1"
 
 [workspace.dependencies.bar]
@@ -869,39 +1215,20 @@ path = "crates/bar"
         let workspace_manifest_path = tmp.path().join("Cargo.toml");
         std::fs::write(&workspace_manifest_path, workspace_manifest).unwrap();
 
-        // Minimal dummy member manifest so that cargo_metadata can see the package.
-        let crates_dir = tmp.path().join("crates");
-        std::fs::create_dir_all(&crates_dir).unwrap();
-
+        // Minimal dummy member manifests so that cargo_metadata can see the packages.
         // Member `foo` for the inline table workspace dependency.
-        let foo_dir = crates_dir.join("foo");
-        std::fs::create_dir_all(foo_dir.join("src")).unwrap();
-        std::fs::write(
-            foo_dir.join("Cargo.toml"),
-            r#"[package]
-name = "foo"
-version = "1.2.3"
-edition = "2021"
-"#,
-        )
-        .unwrap();
-        // Add a minimal lib target so Cargo considers this crate valid.
-        std::fs::write(foo_dir.join("src/lib.rs"), "pub fn _dummy() {}\n").unwrap();
+        write_member(tmp.path(), "foo", "");
 
         // Member `bar` for the table-style workspace dependency.
-        let bar_dir = crates_dir.join("bar");
-        std::fs::create_dir_all(bar_dir.join("src")).unwrap();
-        std::fs::write(
-            bar_dir.join("Cargo.toml"),
-            r#"[package]
-name = "bar"
-version = "1.2.3"
-edition = "2021"
-"#,
-        )
-        .unwrap();
-        // Add a minimal lib target so Cargo considers this crate valid.
-        std::fs::write(bar_dir.join("src/lib.rs"), "pub fn _dummy() {}\n").unwrap();
+        write_member(tmp.path(), "bar", "");
+        write_member(
+            tmp.path(),
+            "consumer",
+            r"[dependencies]
+foo-alias.workspace = true
+bar.workspace = true
+",
+        );
 
         let metadata = cargo_metadata::MetadataCommand::new()
             .manifest_path(&workspace_manifest_path)
@@ -909,48 +1236,66 @@ edition = "2021"
             .unwrap();
 
         // Build a packages map compatible with update_workspace_dependencies.
-        let mut packages =
-            std::collections::HashMap::<PathBuf, std::sync::Arc<super::Package>>::new();
-        for pkg in metadata.workspace_packages() {
-            let path: PathBuf = pkg.manifest_path.parent().unwrap().into();
-            packages.insert(
-                path.clone(),
-                std::sync::Arc::new(super::Package {
-                    inner: pkg.clone(),
-                    path,
-                    should_publish: true,
-                    published: parking_lot::Mutex::new(false),
-                    deps: parking_lot::RwLock::new(std::collections::HashMap::new()),
-                    dependants: parking_lot::RwLock::new(std::collections::HashMap::new()),
-                }),
-            );
-        }
+        let packages = package_map(&metadata, &options(workspace_manifest_path.clone()));
 
-        let mut options = super::Options {
-            path: workspace_manifest_path.clone(),
-            registry_token: None,
-            dry_run: false,
-            publish_delay: None,
-            no_verify: false,
-            resolve_versions: true,
-            include: None,
-            exclude: None,
-            max_retries: None,
-            concurrency_limit: None,
-        };
+        let mut options = options(workspace_manifest_path.clone());
+        options.resolve_versions = true;
 
-        // Exercise the helper with resolve_versions enabled; this should not error.
-        super::update_workspace_dependencies(&metadata, &packages, &options)
+        // Exercise the helper in dry-run mode before allowing it to persist changes.
+        let original_manifest = std::fs::read_to_string(&workspace_manifest_path).unwrap();
+        options.dry_run = true;
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
             .await
             .unwrap();
+        sim_assert_eq!(changed, true);
+        sim_assert_eq!(
+            std::fs::read_to_string(&workspace_manifest_path).unwrap(),
+            original_manifest
+        );
+
+        options.dry_run = false;
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
+            .await
+            .unwrap();
+        sim_assert_eq!(changed, true);
+
+        let updated_manifest = std::fs::read_to_string(&workspace_manifest_path)
+            .unwrap()
+            .parse::<toml_edit::DocumentMut>()
+            .unwrap();
+        let dependencies = updated_manifest
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .expect("workspace dependencies must remain present");
+        let foo_alias = dependencies
+            .get("foo-alias")
+            .expect("foo alias must remain a detailed entry");
+        sim_assert_eq!(
+            foo_alias.get("version").and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
+        );
+        sim_assert_eq!(
+            foo_alias.get("package").and_then(toml_edit::Item::as_str),
+            Some("foo")
+        );
+        sim_assert_eq!(
+            dependencies
+                .get("bar")
+                .and_then(|bar| bar.get("version"))
+                .and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
+        );
+        sim_assert_eq!(
+            dependencies.get("serde").and_then(toml_edit::Item::as_str),
+            Some("1")
+        );
 
         // Exercise the helper again with resolve_versions disabled; this should
-        // also be a no-op without errors. We deliberately avoid asserting on
-        // exact file contents here to keep the test robust across platforms
-        // and toml_edit formatting differences.
+        // also be a no-op without errors.
         options.resolve_versions = false;
-        super::update_workspace_dependencies(&metadata, &packages, &options)
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
             .await
             .unwrap();
+        sim_assert_eq!(changed, false);
     }
 }
