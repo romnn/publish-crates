@@ -31,6 +31,7 @@
 
 use action_core as action;
 use cargo_metadata::DependencyKind;
+use cargo_metadata::cargo_platform::Platform;
 use color_eyre::{Section, eyre};
 use futures::Future;
 use futures::stream::{self, FuturesUnordered, StreamExt};
@@ -76,6 +77,10 @@ pub struct Options {
     /// A local dependency such as `{ path = "../some/path" }` receives the version of the package
     /// at that path. Existing version requirements are also replaced.
     ///
+    /// Versionless development dependencies on packages with `publish = false` remain path-only,
+    /// so Cargo omits them from the published manifest. Other private local dependencies prevent
+    /// publication.
+    ///
     /// Unless [`Self::dry_run`] is enabled, this updates affected Cargo manifests.
     pub resolve_versions: bool,
 
@@ -118,6 +123,7 @@ impl Options {
 struct Package {
     inner: cargo_metadata::Package,
     path: PathBuf,
+    publishable: bool,
     should_publish: bool,
     published: Mutex<bool>,
     deps: RwLock<HashMap<String, Arc<Package>>>,
@@ -403,7 +409,7 @@ fn find_packages(
 ) -> impl Iterator<Item = (PathBuf, Arc<Package>)> {
     let packages = metadata.workspace_packages();
     packages.into_iter().filter_map(move |package| {
-        let should_publish = package.publish.as_ref().is_none_or(|p| !p.is_empty());
+        let publishable = package.publish.as_ref().is_none_or(|p| !p.is_empty());
 
         let is_included = options
             .include
@@ -415,7 +421,7 @@ fn find_packages(
             .as_ref()
             .is_some_and(|excl| excl.contains(&package.name));
 
-        let should_publish = should_publish && is_included && !is_excluded;
+        let should_publish = publishable && is_included && !is_excluded;
 
         let path: PathBuf = package.manifest_path.parent()?.into();
         Some((
@@ -423,6 +429,7 @@ fn find_packages(
             Arc::new(Package {
                 inner: package.clone(),
                 path,
+                publishable,
                 should_publish,
                 published: Mutex::new(false),
                 deps: RwLock::new(HashMap::new()),
@@ -440,24 +447,15 @@ fn update_dependency_version(
 ) -> eyre::Result<bool> {
     use toml_edit::value;
 
-    let section = match dependency.kind {
-        DependencyKind::Normal => Some("dependencies"),
-        DependencyKind::Development => Some("dev-dependencies"),
-        DependencyKind::Build => Some("build-dependencies"),
-        _ => None,
-    };
+    let section = dependency_section(dependency);
     let Some(section) = section else {
         return Ok(false);
     };
 
     let dependency_key = dependency.rename.as_deref().unwrap_or(&dependency.name);
-    let manifest_dependency = manifest
-        .get_mut(section)
-        .and_then(toml_edit::Item::as_table_like_mut)
-        .and_then(|dependencies| dependencies.get_mut(dependency_key))
-        .ok_or_else(|| {
-            eyre::eyre!("{package_name}: dependency {dependency_key} is missing from {section}",)
-        })?;
+    let manifest_dependency = manifest_dependency_mut(manifest, dependency).ok_or_else(|| {
+        eyre::eyre!("{package_name}: dependency {dependency_key} is missing from {section}",)
+    })?;
     {
         let dependency_table = manifest_dependency.as_table_like_mut().ok_or_else(|| {
             eyre::eyre!(
@@ -473,109 +471,248 @@ fn update_dependency_version(
     Ok(true)
 }
 
-async fn build_dag(
+fn dependency_section(dependency: &cargo_metadata::Dependency) -> Option<&'static str> {
+    match dependency.kind {
+        DependencyKind::Normal => Some("dependencies"),
+        DependencyKind::Development => Some("dev-dependencies"),
+        DependencyKind::Build => Some("build-dependencies"),
+        _ => None,
+    }
+}
+
+/// Finds the `[target.'...']` key that matches a dependency's target platform.
+///
+/// Keys are compared as parsed platforms because Cargo accepts arbitrary spacing inside
+/// `cfg(...)` expressions, so the manifest text may differ from the canonical rendering.
+fn target_table_key(manifest: &toml_edit::DocumentMut, target: &Platform) -> Option<String> {
+    let targets = manifest.get("target")?.as_table_like()?;
+    targets
+        .iter()
+        .map(|(key, _)| key)
+        .find(|key| key.parse::<Platform>().ok().as_ref() == Some(target))
+        .map(str::to_owned)
+}
+
+fn manifest_dependency<'a>(
+    manifest: &'a toml_edit::DocumentMut,
+    dependency: &cargo_metadata::Dependency,
+) -> Option<&'a toml_edit::Item> {
+    let section = dependency_section(dependency)?;
+    let dependency_key = dependency.rename.as_deref().unwrap_or(&dependency.name);
+    if let Some(target) = &dependency.target {
+        let target_key = target_table_key(manifest, target)?;
+        return manifest
+            .get("target")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|targets| targets.get(&target_key))
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|target| target.get(section))
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|dependencies| dependencies.get(dependency_key));
+    }
+
+    manifest
+        .get(section)
+        .and_then(toml_edit::Item::as_table_like)
+        .and_then(|dependencies| dependencies.get(dependency_key))
+}
+
+fn manifest_dependency_mut<'a>(
+    manifest: &'a mut toml_edit::DocumentMut,
+    dependency: &cargo_metadata::Dependency,
+) -> Option<&'a mut toml_edit::Item> {
+    let section = dependency_section(dependency)?;
+    let dependency_key = dependency.rename.as_deref().unwrap_or(&dependency.name);
+    if let Some(target) = &dependency.target {
+        let target_key = target_table_key(manifest, target)?;
+        return manifest
+            .get_mut("target")
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .and_then(|targets| targets.get_mut(&target_key))
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .and_then(|target| target.get_mut(section))
+            .and_then(toml_edit::Item::as_table_like_mut)
+            .and_then(|dependencies| dependencies.get_mut(dependency_key));
+    }
+
+    manifest
+        .get_mut(section)
+        .and_then(toml_edit::Item::as_table_like_mut)
+        .and_then(|dependencies| dependencies.get_mut(dependency_key))
+}
+
+struct DependencyDeclaration {
+    has_version: bool,
+    inherits_workspace: bool,
+}
+
+fn dependency_declaration(
+    manifest: &toml_edit::DocumentMut,
+    workspace_manifest: &toml_edit::DocumentMut,
+    package_name: &str,
+    dependency: &cargo_metadata::Dependency,
+) -> eyre::Result<DependencyDeclaration> {
+    let dependency_key = dependency.rename.as_deref().unwrap_or(&dependency.name);
+    let item = manifest_dependency(manifest, dependency).ok_or_else(|| {
+        eyre::eyre!("{package_name}: dependency {dependency_key} is missing from its manifest")
+    })?;
+
+    let inherits_workspace = item
+        .as_table_like()
+        .and_then(|dependency| dependency.get("workspace"))
+        .and_then(toml_edit::Item::as_bool)
+        == Some(true);
+    if !inherits_workspace {
+        let has_version = item.is_str()
+            || item
+                .as_table_like()
+                .is_some_and(|dependency| dependency.contains_key("version"));
+        return Ok(DependencyDeclaration {
+            has_version,
+            inherits_workspace,
+        });
+    }
+
+    let workspace_dependency = workspace_manifest
+        .get("workspace")
+        .and_then(|workspace| workspace.get("dependencies"))
+        .and_then(toml_edit::Item::as_table_like)
+        .and_then(|dependencies| dependencies.get(dependency_key))
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "{package_name}: workspace dependency {dependency_key} is missing from the workspace manifest"
+            )
+        })?;
+
+    let has_version = workspace_dependency.is_str()
+        || workspace_dependency
+            .as_table_like()
+            .is_some_and(|dependency| dependency.contains_key("version"));
+    Ok(DependencyDeclaration {
+        has_version,
+        inherits_workspace,
+    })
+}
+
+async fn prepare_package(
+    package: &Arc<Package>,
+    workspace_manifest: &toml_edit::DocumentMut,
     packages: &HashMap<PathBuf, Arc<Package>>,
     options: &Options,
 ) -> eyre::Result<()> {
-    let packages_iter = packages.values().filter(|p| p.should_publish);
+    use toml_edit::DocumentMut;
+    let manifest = tokio::fs::read_to_string(&package.inner.manifest_path).await?;
+    let mut manifest = manifest.parse::<DocumentMut>()?;
+    let mut need_update = false;
+
+    for dependency in &package.inner.dependencies {
+        let mut dependency_version = dependency.req.clone();
+        if let Some(path) = dependency.path.as_ref().map(PathBuf::from) {
+            // Resolve every local dependency, even if it already has a version requirement.
+            let resolved = packages.get(&path).ok_or(eyre::eyre!(
+                "{}: could not resolve local dependency {}",
+                &package.inner.name,
+                path.display()
+            ))?;
+            let declaration = dependency_declaration(
+                &manifest,
+                workspace_manifest,
+                &package.inner.name,
+                dependency,
+            )?;
+
+            // Cargo omits versionless development dependencies from published manifests,
+            // which lets published packages keep private workspace-only test support.
+            if dependency.kind == DependencyKind::Development
+                && !declaration.has_version
+                && !resolved.publishable
+            {
+                continue;
+            }
+
+            // A published package cannot depend on a local package excluded from this run.
+            if !resolved.should_publish {
+                eyre::bail!(
+                    "{}: cannot publish because dependency {} will not be published",
+                    &package.inner.name,
+                    &dependency.name,
+                );
+            }
+
+            if options.resolve_versions {
+                // Use the version declared by the package at the dependency path.
+                dependency_version = format!("={}", resolved.inner.version).parse()?;
+
+                let changed = dependency_version != dependency.req;
+                if changed && !declaration.inherits_workspace {
+                    // Keep the manifest aligned with the graph used for publishing.
+                    need_update |= update_dependency_version(
+                        &mut manifest,
+                        &package.inner.name,
+                        dependency,
+                        &dependency_version,
+                    )?;
+                }
+            }
+
+            package
+                .deps
+                .write()
+                .insert(resolved.inner.name.to_string(), resolved.clone());
+
+            resolved
+                .dependants
+                .write()
+                .insert(package.inner.name.to_string(), package.clone());
+        }
+
+        let is_dev_dependency = dependency.kind == DependencyKind::Development;
+        let is_non_local_dependency = !is_dev_dependency || dependency.path.is_none();
+        let is_missing_exact_version = dependency_version == semver::VersionReq::STAR;
+
+        if is_missing_exact_version && is_non_local_dependency {
+            return Err(eyre::eyre!(
+                "{}: dependency {} has no specific version ({})",
+                &package.inner.name,
+                &dependency.name,
+                dependency_version
+            ).suggestion("to automatically resolve versions of local workspace members, use '--resolve-versions'"));
+        }
+    }
+
+    // Dry-runs validate the edits in memory without modifying the checkout.
+    if !options.dry_run && need_update {
+        use tokio::io::AsyncWriteExt;
+        action::debug!("{}", &manifest.to_string());
+        action::info!(
+            "[{}@{}] updating {}",
+            package.inner.name,
+            package.inner.version,
+            package.inner.manifest_path
+        );
+        let mut file = tokio::fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&package.inner.manifest_path)
+            .await?;
+        file.write_all(manifest.to_string().as_bytes()).await?;
+        file.flush().await?;
+    }
+
+    Ok(())
+}
+
+async fn build_dag(
+    metadata: &cargo_metadata::Metadata,
+    packages: &HashMap<PathBuf, Arc<Package>>,
+    options: &Options,
+) -> eyre::Result<()> {
+    let workspace_manifest = tokio::fs::read_to_string(metadata.workspace_root.join("Cargo.toml"))
+        .await?
+        .parse::<toml_edit::DocumentMut>()?;
+    let packages_iter = packages.values().filter(|package| package.should_publish);
     let results: Vec<_> = stream::iter(packages_iter)
-        .map(|p| async move {
-            use toml_edit::DocumentMut;
-            let manifest_path = &p.inner.manifest_path;
-            let manifest = tokio::fs::read_to_string(manifest_path).await?;
-            let mut manifest = manifest.parse::<DocumentMut>()?;
-            let mut need_update = false;
-
-            for dep in &p.inner.dependencies {
-                let mut dep_version = dep.req.clone();
-                if let Some(path) = dep.path.as_ref().map(PathBuf::from) {
-                    // Cargo omits path-only development dependencies from published manifests.
-                    if dep.kind == DependencyKind::Development
-                        && dep.req == semver::VersionReq::STAR
-                    {
-                        continue;
-                    }
-
-                    // Resolve every local dependency, even if it already has a version requirement.
-                    let resolved = packages.get(&path).ok_or(eyre::eyre!(
-                        "{}: could not resolve local dependency {}",
-                        &p.inner.name,
-                        path.display()
-                    ))?;
-
-                    // A published package cannot depend on a local package excluded from this run.
-                    if !resolved.should_publish {
-                        eyre::bail!(
-                            "{}: cannot publish because dependency {} will not be published",
-                            &p.inner.name,
-                            &dep.name,
-                        );
-                    }
-
-                    if options.resolve_versions {
-                        // Use the version declared by the package at the dependency path.
-                        dep_version = semver::VersionReq {
-                            comparators: vec![semver::Comparator {
-                                op: semver::Op::Exact,
-                                major: resolved.inner.version.major,
-                                minor: Some(resolved.inner.version.minor),
-                                patch: Some(resolved.inner.version.patch),
-                                pre: semver::Prerelease::EMPTY,
-                            }],
-                        };
-
-                        let changed = dep_version != dep.req;
-                        if changed {
-                            // Keep the manifest aligned with the graph used for publishing.
-                            need_update |= update_dependency_version(
-                                &mut manifest,
-                                &p.inner.name,
-                                dep,
-                                &dep_version,
-                            )?;
-                        }
-                    }
-
-                    p.deps
-                        .write()
-                        .insert(resolved.inner.name.to_string(), resolved.clone());
-
-                    resolved
-                        .dependants
-                        .write()
-                        .insert(p.inner.name.to_string(), p.clone());
-                }
-
-                let is_dev_dep = dep.kind == DependencyKind::Development;
-                let is_non_local_dep = !is_dev_dep || dep.path.is_none();
-                let is_missing_exact_version = dep_version == semver::VersionReq::STAR;
-
-                if is_missing_exact_version && is_non_local_dep {
-                    return Err(eyre::eyre!(
-                        "{}: dependency {} has no specific version ({})",
-                        &p.inner.name,
-                        &dep.name,
-                        dep_version
-                    ).suggestion("to automatically resolve versions of local workspace members, use '--resolve-versions'"));
-                }
-            }
-
-            // Dry-runs validate the edits in memory without modifying the checkout.
-            if !options.dry_run && need_update {
-                use tokio::io::AsyncWriteExt;
-                action::debug!("{}", &manifest.to_string());
-                action::info!("[{}@{}] updating {}", p.inner.name, p.inner.version, p.inner.manifest_path);
-                let mut f = tokio::fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(&p.inner.manifest_path)
-                    .await?;
-                f.write_all(manifest.to_string().as_bytes()).await?;
-                f.flush().await?;
-            }
-
-            Ok(())
-        })
+        .map(|package| prepare_package(package, &workspace_manifest, packages, options))
         .buffer_unordered(8)
         .collect()
         .await;
@@ -620,9 +757,16 @@ async fn update_workspace_dependencies(
         .filter(|package| package.should_publish)
         .flat_map(|package| &package.inner.dependencies)
         .filter(|dependency| {
-            dependency.path.is_some()
-                && (dependency.kind != DependencyKind::Development
-                    || dependency.req != semver::VersionReq::STAR)
+            let Some(path) = dependency.path.as_ref().map(PathBuf::from) else {
+                return false;
+            };
+            let Some(target) = packages.get(&path) else {
+                return false;
+            };
+
+            dependency.kind != DependencyKind::Development
+                || dependency.req != semver::VersionReq::STAR
+                || target.publishable
         })
         .map(|dependency| dependency.name.as_str())
         .collect::<HashSet<_>>();
@@ -661,25 +805,27 @@ async fn update_workspace_dependencies(
             // Handle both inline tables and normal tables.
             if let Some(inline) = item.as_inline_table_mut() {
                 let has_path = inline.get("path").is_some();
-                let has_version = inline.get("version").is_some();
+                let ver_req = format!("={}", pkg.inner.version);
+                let has_resolved_version =
+                    inline.get("version").and_then(Value::as_str) == Some(ver_req.as_str());
 
-                if !has_path || has_version {
+                if !has_path || has_resolved_version {
                     continue;
                 }
 
-                let ver_req = format!("={}", pkg.inner.version);
                 inline.insert("version", Value::from(ver_req));
                 inline.fmt();
                 need_update = true;
             } else if let Some(table_item) = item.as_table_mut() {
                 let has_path = table_item.get("path").is_some();
-                let has_version = table_item.get("version").is_some();
+                let ver_req = format!("={}", pkg.inner.version);
+                let has_resolved_version =
+                    table_item.get("version").and_then(Item::as_str) == Some(ver_req.as_str());
 
-                if !has_path || has_version {
+                if !has_path || has_resolved_version {
                     continue;
                 }
 
-                let ver_req = format!("={}", pkg.inner.version);
                 table_item["version"] = value(ver_req);
                 need_update = true;
             }
@@ -712,6 +858,9 @@ async fn update_workspace_dependencies(
 /// [`Options::concurrency_limit`], while each dependant waits for its dependencies to appear on the
 /// registry.
 ///
+/// Versionless development dependencies on private packages are excluded because Cargo omits them
+/// from the published manifest.
+///
 /// # Errors
 ///
 /// Returns an error when the options or Cargo metadata are invalid, dependency versions cannot be
@@ -741,7 +890,7 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
             .exec()?;
         packages = find_packages(&metadata, &options).collect();
     }
-    build_dag(&packages, &options).await?;
+    build_dag(&metadata, &packages, &options).await?;
 
     action::info!(
         "found packages: {:?}",
@@ -1029,25 +1178,29 @@ resolver = "2"
         sim_assert_eq!(selected.get("bar"), Some(&false));
     }
 
-    /// Verifies renamed local dependencies are updated at their manifest key.
+    /// Versions normal and build dependencies, including renamed manifest keys.
     #[tokio::test]
-    async fn build_dag_resolves_renamed_local_dependency() {
+    async fn build_dag_resolves_normal_and_build_dependencies() {
         let temp = tempfile::tempdir().expect("temporary workspace must be created");
         let workspace_manifest_path = temp.path().join("Cargo.toml");
         std::fs::write(
             &workspace_manifest_path,
             r#"[workspace]
-members = ["crates/foo", "crates/consumer"]
+members = ["crates/foo", "crates/build-support", "crates/consumer"]
 resolver = "2"
 "#,
         )
         .expect("workspace manifest must be written");
         write_member(temp.path(), "foo", "");
+        write_member(temp.path(), "build-support", "");
         write_member(
             temp.path(),
             "consumer",
             r#"[dependencies]
 renamed = { package = "foo", path = "../foo" }
+
+[build-dependencies]
+build-support = { path = "../build-support" }
 "#,
         );
 
@@ -1059,7 +1212,7 @@ renamed = { package = "foo", path = "../foo" }
         options.resolve_versions = true;
         let packages = package_map(&metadata, &options);
 
-        super::build_dag(&packages, &options)
+        super::build_dag(&metadata, &packages, &options)
             .await
             .expect("dependency graph must resolve");
 
@@ -1086,11 +1239,23 @@ renamed = { package = "foo", path = "../foo" }
             renamed.get("package").and_then(toml_edit::Item::as_str),
             Some("foo")
         );
+        let build_support = manifest
+            .get("build-dependencies")
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|dependencies| dependencies.get("build-support"))
+            .and_then(toml_edit::Item::as_table_like)
+            .expect("build dependency must remain a detailed entry");
+        sim_assert_eq!(
+            build_support
+                .get("version")
+                .and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
+        );
     }
 
-    /// Keeps path-only development dependencies private during publication.
+    /// Keeps path-only development dependencies on private packages out of the publish graph.
     #[tokio::test]
-    async fn path_only_dev_dependency_is_omitted_from_publish_graph() {
+    async fn path_only_private_dev_dependency_is_omitted_from_publish_graph() {
         let temp = tempfile::tempdir().expect("temporary workspace must be created");
         let workspace_manifest_path = temp.path().join("Cargo.toml");
         std::fs::write(
@@ -1124,7 +1289,7 @@ test-support.workspace = true
         let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
             .await
             .expect("private development dependencies must not require versions");
-        super::build_dag(&packages, &options)
+        super::build_dag(&metadata, &packages, &options)
             .await
             .expect("private development dependencies must not block publication");
 
@@ -1148,6 +1313,221 @@ test-support.workspace = true
                 .get("version")
                 .and_then(toml_edit::Item::as_str),
             None
+        );
+    }
+
+    /// Keeps directly declared path-only dev-dependencies on private packages untouched.
+    #[tokio::test]
+    async fn direct_path_only_private_dev_dependency_is_omitted() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/test-util", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "test-util", "publish = false\n");
+        write_member(
+            temp.path(),
+            "consumer",
+            r#"[dev-dependencies]
+test-util = { path = "../test-util" }
+"#,
+        );
+        let consumer_manifest_path = temp
+            .path()
+            .join("crates")
+            .join("consumer")
+            .join("Cargo.toml");
+        let original_manifest = std::fs::read_to_string(&consumer_manifest_path)
+            .expect("consumer manifest must be readable");
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        super::build_dag(&metadata, &packages, &options)
+            .await
+            .expect("private development dependencies must not block publication");
+
+        let consumer = packages
+            .values()
+            .find(|package| package.inner.name == "consumer")
+            .expect("consumer package must be present");
+        sim_assert_eq!(consumer.deps.read().len(), 0);
+        sim_assert_eq!(
+            std::fs::read_to_string(&consumer_manifest_path)
+                .expect("consumer manifest must be readable"),
+            original_manifest
+        );
+    }
+
+    /// Versions target-specific publishable dev-dependencies and preserves their ordering.
+    #[tokio::test]
+    async fn target_publishable_dev_dependency_is_versioned_and_ordered() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/test-support", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "test-support", "");
+        // The spacing inside `cfg(...)` deliberately differs from the canonical platform
+        // rendering to cover target keys that only match after parsing.
+        write_member(
+            temp.path(),
+            "consumer",
+            r#"[target.'cfg(target_os="linux")'.dev-dependencies]
+test-support = { path = "../test-support" }
+"#,
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        super::build_dag(&metadata, &packages, &options)
+            .await
+            .expect("publishable development dependency must resolve");
+
+        let consumer = packages
+            .values()
+            .find(|package| package.inner.name == "consumer")
+            .expect("consumer package must be present");
+        sim_assert_eq!(consumer.deps.read().len(), 1);
+
+        let manifest = std::fs::read_to_string(
+            temp.path()
+                .join("crates")
+                .join("consumer")
+                .join("Cargo.toml"),
+        )
+        .expect("consumer manifest must be readable")
+        .parse::<toml_edit::DocumentMut>()
+        .expect("consumer manifest must remain valid TOML");
+        let test_support = manifest
+            .get("target")
+            .and_then(|targets| targets.get(r#"cfg(target_os="linux")"#))
+            .and_then(|target| target.get("dev-dependencies"))
+            .and_then(toml_edit::Item::as_table_like)
+            .and_then(|dependencies| dependencies.get("test-support"))
+            .and_then(toml_edit::Item::as_table_like)
+            .expect("development dependency must remain a detailed entry");
+        sim_assert_eq!(
+            test_support
+                .get("version")
+                .and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
+        );
+    }
+
+    /// Rejects explicitly versioned dev-dependencies on private packages.
+    #[tokio::test]
+    async fn versioned_private_dev_dependency_is_rejected() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/test-support", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "test-support", "publish = false\n");
+        write_member(
+            temp.path(),
+            "consumer",
+            r#"[dev-dependencies]
+test-support = { path = "../test-support", version = "*" }
+"#,
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        let error = super::build_dag(&metadata, &packages, &options)
+            .await
+            .expect_err("versioned private development dependency must prevent publication");
+
+        sim_assert_eq!(
+            error.to_string(),
+            "consumer: cannot publish because dependency test-support will not be published"
+        );
+    }
+
+    /// Versions workspace-inherited development dependencies on publishable packages.
+    #[tokio::test]
+    async fn workspace_publishable_dev_dependency_receives_version() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let workspace_manifest_path = temp.path().join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/test-support", "crates/consumer"]
+resolver = "2"
+
+[workspace.dependencies]
+test-support = { path = "crates/test-support" }
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(temp.path(), "test-support", "");
+        write_member(
+            temp.path(),
+            "consumer",
+            r"[dev-dependencies]
+test-support.workspace = true
+",
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path.clone());
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
+            .await
+            .expect("publishable development dependency must resolve");
+
+        sim_assert_eq!(changed, true);
+        let manifest = std::fs::read_to_string(workspace_manifest_path)
+            .expect("workspace manifest must be readable")
+            .parse::<toml_edit::DocumentMut>()
+            .expect("workspace manifest must remain valid TOML");
+        let test_support = manifest
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(|dependencies| dependencies.get("test-support"))
+            .expect("development dependency must remain present");
+        sim_assert_eq!(
+            test_support
+                .get("version")
+                .and_then(toml_edit::Item::as_str),
+            Some("=1.2.3")
         );
     }
 
@@ -1180,7 +1560,7 @@ private-lib = { path = "../private-lib" }
         let options = options(workspace_manifest_path);
         let packages = package_map(&metadata, &options);
 
-        let error = super::build_dag(&packages, &options)
+        let error = super::build_dag(&metadata, &packages, &options)
             .await
             .expect_err("private production dependencies must prevent publication");
 
@@ -1203,7 +1583,7 @@ members = ["crates/foo", "crates/bar", "crates/consumer"]
 version = "1.2.3"
 
 [workspace.dependencies]
-foo-alias = { package = "foo", path = "crates/foo" }
+foo-alias = { package = "foo", path = "crates/foo", version = "*" }
 serde = "1"
 
 [workspace.dependencies.bar]
@@ -1289,6 +1669,11 @@ bar.workspace = true
             dependencies.get("serde").and_then(toml_edit::Item::as_str),
             Some("1")
         );
+
+        let changed = super::update_workspace_dependencies(&metadata, &packages, &options)
+            .await
+            .unwrap();
+        sim_assert_eq!(changed, false);
 
         // Exercise the helper again with resolve_versions disabled; this should
         // also be a no-op without errors.

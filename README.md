@@ -71,6 +71,11 @@ This updates package manifests and path-only entries in `[workspace.dependencies
 `--dry-run` to inspect the dependency graph without modifying manifests; packages with unresolved
 local dependencies cannot run Cargo's own dry-run until those versions are written.
 
+With this option, normal and build dependencies are always resolved. Development dependencies are
+resolved when the package they point to can be published, preserving packaged tests and examples. A
+versionless development dependency on a package with `publish = false` remains path-only, so Cargo
+omits it from the published manifest; other dependencies on private local packages are rejected.
+
 ## GitHub Action
 
 ```yaml
