@@ -17,6 +17,7 @@ targets = [
 [workspace.package]
 version = "0.0.29"
 edition = "2024"
+license = "MIT"
 authors = ["romnn <contact@romnn.com>"]
 description = "Publish rust crates with support for cargo workspaces"
 homepage = "https://github.com/romnn/publish-crates"

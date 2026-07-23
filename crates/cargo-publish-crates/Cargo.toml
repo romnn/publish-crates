@@ -1,11 +1,11 @@
 [package]
 name = "cargo-publish-crates"
-license-file = "../../LICENSE"
 readme = "../../README.md"
 documentation = "https://docs.rs/cargo-publish-crates"
 publish = true
 
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 authors.workspace = true
 description.workspace = true
