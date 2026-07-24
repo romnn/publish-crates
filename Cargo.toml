@@ -38,7 +38,7 @@ parking_lot = "0"
 
 # github actions
 action-core = "0"
-shlex = "1"
+shlex = "2.0.1"
 
 # testing
 similar-asserts = "2.0.0"
