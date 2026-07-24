@@ -956,7 +956,7 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
         // Completed package
         match tasks.next().await {
             Some(Err(err)) => {
-                eyre::bail!("a task failed: {}", err)
+                eyre::bail!("a task failed: {err}");
             }
             Some(Ok(completed)) => {
                 // Newly unblocked dependants
