@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "cargo-publish-crates"
-version = "0.0.29"
+version = "0.1.0"
 dependencies = [
  "clap",
  "color-eyre",
@@ -1354,7 +1354,7 @@ dependencies = [
 
 [[package]]
 name = "publish-crates"
-version = "0.0.29"
+version = "0.1.0"
 dependencies = [
  "action-core",
  "async-process",
@@ -1377,7 +1377,7 @@ dependencies = [
 
 [[package]]
 name = "publish-crates-action"
-version = "0.0.29"
+version = "0.1.0"
 dependencies = [
  "action-core",
  "color-eyre",
