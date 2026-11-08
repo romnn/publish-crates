@@ -102,26 +102,29 @@ url = "https://github.com/romnn/bumpversion/releases/download/v0.0.9/bumpversion
 url_api = "https://api.github.com/repos/romnn/bumpversion/releases/assets/392595454"
 
 [[tools."github:romnn/cargo-feature-combinations"]]
-version = "0.4.1"
+version = "0.4.2"
 backend = "github:romnn/cargo-feature-combinations"
 
 [tools."github:romnn/cargo-feature-combinations".options]
 matching = "cargo-fc"
 
 [tools."github:romnn/cargo-feature-combinations"."platforms.linux-x64"]
-checksum = "sha256:dc90c539994bd13568b718ed214da4b031761cd36cf9c6d35b489fc665691cb6"
-url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.1/cargo-fc_0.4.1_linux_amd64.tar.gz"
-url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/482530275"
+checksum = "sha256:6171d8159bd67a3385847cf36a70663c20c27224fc63fffca5280c8b0446c7e3"
+checksum_source = "mise-versions"
+url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.2/cargo-fc_0.4.2_linux_amd64.tar.gz"
+url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/492091514"
 
 [tools."github:romnn/cargo-feature-combinations"."platforms.macos-arm64"]
-checksum = "sha256:4469162078468909cab1de30839f3942cfe2ecabd97f021f7e4c140654cde112"
-url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.1/cargo-fc_0.4.1_darwin_arm64.tar.gz"
-url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/482530283"
+checksum = "sha256:477daf33d5ce3eb256b8b1b433218c1c84064c2b31fd17ecd61e7ad9f06b80a4"
+checksum_source = "mise-versions"
+url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.2/cargo-fc_0.4.2_darwin_arm64.tar.gz"
+url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/492091522"
 
 [tools."github:romnn/cargo-feature-combinations"."platforms.windows-x64"]
-checksum = "sha256:cc641dd5bcc3dd1bb2d710299fb563ee08716a1bbcfc6e99a36c84db08d56e86"
-url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.1/cargo-fc_0.4.1_windows_amd64.zip"
-url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/482530287"
+checksum = "sha256:34f62d3781305d5104f45ede34bd017e4fe7e267198564e82cbd46f72d063522"
+checksum_source = "mise-versions"
+url = "https://github.com/romnn/cargo-feature-combinations/releases/download/v0.4.2/cargo-fc_0.4.2_windows_amd64.zip"
+url_api = "https://api.github.com/repos/romnn/cargo-feature-combinations/releases/assets/492091521"
 
 [[tools."github:romnn/cargo-watchdoc"]]
 version = "0.3.10"
