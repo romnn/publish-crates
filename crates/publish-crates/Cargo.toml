@@ -39,6 +39,9 @@ semver = "1"
 cargo_metadata = "0"
 toml_edit = "0"
 
+# Plain text of styled Cargo output
+strip-ansi-escapes = "0.2"
+
 # Pretty print time
 time = { version = "0", features = ["formatting", "std", "macros"] }
 humantime = "2"

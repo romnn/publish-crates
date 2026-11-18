@@ -76,6 +76,18 @@ resolved when the package they point to can be published, preserving packaged te
 versionless development dependency on a package with `publish = false` remains path-only, so Cargo
 omits it from the published manifest; other dependencies on private local packages are rejected.
 
+## Minimum publish age
+
+Cargo's `min-publish-age` registry setting rejects versions published too recently, including a
+local dependency this tool published moments earlier.
+When Cargo rejects the release of a local dependency for its age, the package is published again
+with `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow`.
+Cargo applies that to the whole invocation, so registry dependencies that the workspace's
+`Cargo.lock` does not pin, such as ones replaced through `[patch]`, may then resolve to versions
+newer than the policy.
+Any other age rejection that Cargo reports fails publishing without retries.
+Set `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=deny` to keep the policy for every dependency.
+
 ## GitHub Action
 
 ```yaml

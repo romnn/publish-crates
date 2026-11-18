@@ -228,12 +228,46 @@ impl Package {
         }
     }
 
+    /// Decides whether Cargo may publish this package with too new dependencies allowed.
+    ///
+    /// A local dependency was published moments ago, so only waiting out the age policy would
+    /// satisfy it.
+    /// Cargo has no per-package exemption, so this allows fresh versions for the package's whole
+    /// invocation, and only once Cargo has rejected the exact version of a local dependency.
+    /// Crate names are unique on the registry, so that version is the local package's own release.
+    fn exempts_too_new_dependency(&self, rejected: &TooNewDependency<'_>) -> bool {
+        let is_local_release = self.deps.read().get(rejected.package).is_some_and(|local| {
+            rejected.versions.iter().any(|version| {
+                version
+                    .parse::<semver::Version>()
+                    .is_ok_and(|version| version == local.inner.version)
+            })
+        });
+        if !is_local_release {
+            return false;
+        }
+        action::warning!(
+            "[{}@{}] local dependency {} is newer than the registry's min-publish-age; \
+             publishing again with {INCOMPATIBLE_PUBLISH_AGE_ENV}=allow",
+            self.inner.name,
+            self.inner.version,
+            rejected.package,
+        );
+        true
+    }
+
+    /// Runs `cmd` until it publishes the package, retrying intermittent registry failures.
+    ///
+    /// Unless `caller_chose_publish_age` is set, a local dependency that the registry's
+    /// `min-publish-age` rejects is allowed for one more attempt that does not count as a retry.
     pub async fn attempt_publish(
         &self,
         mut cmd: async_process::Command,
         max_retries: usize,
+        caller_chose_publish_age: bool,
     ) -> eyre::Result<()> {
         let mut attempt = 0;
+        let mut allows_too_new_dependencies = false;
         loop {
             attempt += 1;
 
@@ -249,7 +283,8 @@ impl Package {
 
             let output = cmd.output().await?;
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let stderr = String::from_utf8_lossy(&output.stderr);
+            // The checks below match plain text, and arguments such as `--color always` style it.
+            let stderr = strip_ansi_escapes::strip_str(String::from_utf8_lossy(&output.stderr));
             action::debug!("{}", &stdout);
             action::debug!("{}", &stderr);
 
@@ -271,7 +306,27 @@ impl Package {
                 );
             }
 
-            if stderr.contains("already exists on crates.io index") {
+            if let Some(rejected) = too_new_dependency(&stderr) {
+                if !caller_chose_publish_age
+                    && !allows_too_new_dependencies
+                    && self.exempts_too_new_dependency(&rejected)
+                {
+                    cmd.env(INCOMPATIBLE_PUBLISH_AGE_ENV, "allow");
+                    allows_too_new_dependencies = true;
+                    // This repeats a deterministic failure with a fix, not an intermittent one.
+                    attempt -= 1;
+                    continue;
+                }
+                eyre::bail!(
+                    "command {:?} failed because dependency {} is newer than the registry's \
+                     min-publish-age, which retrying cannot change: {}",
+                    cmd,
+                    rejected.package,
+                    stderr
+                );
+            }
+
+            if is_already_published(&stderr) {
                 return Ok(());
             }
 
@@ -362,7 +417,9 @@ impl Package {
         cmd.args(&options.extra_args);
 
         let max_retries = options.max_retries.unwrap_or(10);
-        self.attempt_publish(cmd, max_retries).await?;
+        let caller_chose_publish_age = std::env::var_os(INCOMPATIBLE_PUBLISH_AGE_ENV).is_some();
+        self.attempt_publish(cmd, max_retries, caller_chose_publish_age)
+            .await?;
 
         if options.dry_run {
             action::info!(
@@ -861,11 +918,18 @@ async fn update_workspace_dependencies(
 /// Versionless development dependencies on private packages are excluded because Cargo omits them
 /// from the published manifest.
 ///
+/// When the registry's `min-publish-age` rejects the release of a local dependency as too new, the
+/// package is published again with `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow`.
+/// Cargo applies that to the whole invocation, including registry dependencies that the workspace
+/// lockfile does not pin.
+/// Setting that variable in the process environment, such as to `deny`, disables the exemption.
+///
 /// # Errors
 ///
 /// Returns an error when the options or Cargo metadata are invalid, dependency versions cannot be
 /// resolved, a selected package depends on an excluded package, `cargo publish` fails permanently,
 /// or a published package does not become available before the registry timeout.
+/// A dependency that `min-publish-age` rejects fails at once, unless the exemption above applies.
 pub async fn publish(mut options: Options) -> eyre::Result<()> {
     options.validate()?;
     action::info!("searching cargo packages at {}", options.path.display());
@@ -981,6 +1045,53 @@ pub async fn publish(mut options: Options) -> eyre::Result<()> {
     }
 
     Ok(())
+}
+
+/// Environment variable that overrides Cargo's `resolver.incompatible-publish-age` setting.
+const INCOMPATIBLE_PUBLISH_AGE_ENV: &str = "CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE";
+
+/// A dependency whose releases Cargo rejected as newer than the registry's `min-publish-age`.
+#[derive(Debug, PartialEq, Eq)]
+struct TooNewDependency<'a> {
+    package: &'a str,
+    /// Every release that matched the requirement but was rejected for its age.
+    versions: Vec<&'a str>,
+}
+
+/// Returns the dependency whose releases Cargo rejected under the registry's `min-publish-age`.
+///
+/// Only this diagnostic marks the rejection as permanent.
+/// Other resolution failures, such as a version or feature the registry index does not list yet,
+/// stay retryable.
+fn too_new_dependency(stderr: &str) -> Option<TooNewDependency<'_>> {
+    const REQUIREMENT: &str = "failed to select a version for the requirement `";
+
+    // Cargo names the requirement, then lists each rejected candidate on a line of its own.
+    let (_, requirement) = stderr.split_once(REQUIREMENT)?;
+    let (package, candidates) = requirement.split_once(" = ")?;
+    let versions: Vec<&str> = candidates
+        .lines()
+        .filter_map(|line| {
+            let candidate = line.trim_start().strip_prefix("version ")?;
+            let (version, _) = candidate.split_once(" is too new (published ")?;
+            Some(version)
+        })
+        .collect();
+    if versions.is_empty() {
+        return None;
+    }
+    Some(TooNewDependency { package, versions })
+}
+
+/// Returns whether `cargo publish` failed because the package version is already published.
+///
+/// A dry run reports an existing version only as a warning and goes on, so a later failure in the
+/// same output is real.
+/// The error is not anchored to the line start, because stripped progress output can precede it.
+fn is_already_published(stderr: &str) -> bool {
+    stderr.lines().any(|line| {
+        line.contains("error: crate ") && line.contains(" already exists on crates.io index")
+    })
 }
 
 /// Classification of publishing errors.
@@ -1129,6 +1240,279 @@ edition = "2021"
             sim_assert_eq!(error, expected);
             sim_assert_eq!(error.code(), expected.code());
         }
+    }
+
+    /// Recognizes only Cargo's min-publish-age rejection, quoted from cargo 1.100.
+    #[test]
+    fn detects_dependencies_rejected_by_min_publish_age() {
+        let too_new = r#"error: failed to prepare local package for uploading
+
+Caused by:
+  failed to select a version for the requirement `micromux = "=0.4.6"`
+    version 0.4.6 is too new (published 35 seconds ago, minimum age 1 week)
+  location searched: crates.io index
+  required by package `micromux-control v0.4.6 (/repo/crates/micromux-control)`
+  help: to preserve the min-publish-age, downgrade the requirement to "0.4.2"
+  help: to use too-new packages anyways, re-resolve with `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow`
+"#;
+        // A dry run warns about an existing version before the resolution error that fails it.
+        let dry_run = format!(
+            "warning: crate micromux-control@0.4.6 already exists on crates.io index\n{too_new}"
+        );
+        // A version the index does not list yet is the lag that publish_delay waits out.
+        let missing_version = r#"error: failed to select a version for the requirement `micromux = "=0.4.7"`
+candidate versions found which didn't match: 0.4.6, 0.4.5, 0.4.4, ...
+location searched: crates.io index
+required by package `micromux-control v0.4.7 (/repo/crates/micromux-control)`
+"#;
+        // A feature conflict can also come from index lag, so it must stay retryable.
+        let feature_conflict = r"error: failed to select a version for `micromux`.
+    ... required by package `micromux-control v0.4.7 (/repo/crates/micromux-control)`
+versions that meet the requirements `^0.4` are: 0.4.6
+the package `micromux-control` depends on `micromux`, with features: `control` but `micromux` does not have these features.
+failed to select a version for `micromux` which could resolve this conflict
+";
+
+        // A caret requirement can match several releases that are all too new.
+        let several = r#"error: failed to select a version for the requirement `micromux = "^0.4"`
+  version 0.4.5 is too new (published 2 days ago, minimum age 1 week)
+  version 0.4.6 is too new (published 35 seconds ago, minimum age 1 week)
+location searched: crates.io index
+"#;
+
+        // Rejection names the package and every rejected release
+        let micromux = Some(super::TooNewDependency {
+            package: "micromux",
+            versions: vec!["0.4.6"],
+        });
+        sim_assert_eq!(super::too_new_dependency(too_new), micromux);
+        sim_assert_eq!(super::too_new_dependency(&dry_run), micromux);
+        sim_assert_eq!(
+            super::too_new_dependency(several),
+            Some(super::TooNewDependency {
+                package: "micromux",
+                versions: vec!["0.4.5", "0.4.6"],
+            })
+        );
+
+        // Index lag stays retryable
+        sim_assert_eq!(super::too_new_dependency(missing_version), None);
+        sim_assert_eq!(super::too_new_dependency(feature_conflict), None);
+    }
+
+    /// Treats only Cargo's duplicate error as published, not the warning a dry run prints.
+    #[test]
+    fn detects_already_published_versions() {
+        let error = "    Updating crates.io index\n\
+                     error: crate micromux@0.4.6 already exists on crates.io index\n";
+        let dry_run_warning = "warning: crate micromux@0.4.6 already exists on crates.io index\n\
+                               error: could not compile `micromux` (lib) due to 1 previous error\n";
+
+        // Forced progress output loses its carriage return when terminal escapes are stripped.
+        let after_progress = "    Updating crates.io index    error: crate micromux@0.4.6 \
+                              already exists on crates.io index\n";
+
+        assert!(super::is_already_published(error));
+        assert!(super::is_already_published(after_progress));
+        assert!(!super::is_already_published(dry_run_warning));
+    }
+
+    /// Builds a workspace where `consumer` depends on its sibling `foo` and returns `consumer`.
+    #[cfg(unix)]
+    async fn consumer_of_local_foo(workspace: &Path) -> std::sync::Arc<super::Package> {
+        let workspace_manifest_path = workspace.join("Cargo.toml");
+        std::fs::write(
+            &workspace_manifest_path,
+            r#"[workspace]
+members = ["crates/foo", "crates/consumer"]
+resolver = "2"
+"#,
+        )
+        .expect("workspace manifest must be written");
+        write_member(workspace, "foo", "");
+        write_member(
+            workspace,
+            "consumer",
+            r#"[dependencies]
+foo = { path = "../foo" }
+"#,
+        );
+
+        let metadata = cargo_metadata::MetadataCommand::new()
+            .manifest_path(&workspace_manifest_path)
+            .exec()
+            .expect("workspace metadata must load");
+        let mut options = options(workspace_manifest_path);
+        options.resolve_versions = true;
+        let packages = package_map(&metadata, &options);
+        super::build_dag(&metadata, &packages, &options)
+            .await
+            .expect("dependency graph must resolve");
+
+        packages
+            .into_values()
+            .find(|package| package.inner.name.as_str() == "consumer")
+            .expect("consumer package must be discovered")
+    }
+
+    /// Returns Cargo's rejection of `package@version` under `min-publish-age`.
+    #[cfg(unix)]
+    fn too_new_stderr(package: &str, version: &str) -> String {
+        format!(
+            "error: failed to select a version for the requirement `{package} = \"={version}\"`\n  \
+             version {version} is too new (published 3 seconds ago, minimum age 1 week)"
+        )
+    }
+
+    /// Returns a stand-in for `cargo publish` that records each run's age policy in `log`.
+    ///
+    /// Under Cargo's default policy it fails with `strict_stderr`.
+    /// With too new dependencies allowed it fails with `allowed_stderr`, or succeeds without one.
+    /// The caller's own policy is removed so that only the publisher's override reaches it.
+    #[cfg(unix)]
+    fn publish_stub(
+        log: &Path,
+        strict_stderr: &str,
+        allowed_stderr: Option<&str>,
+    ) -> async_process::Command {
+        let mut cmd = async_process::Command::new("sh");
+        cmd.arg("-c")
+            .arg(format!(
+                r#"if [ "${var}" = allow ]; then
+  echo allow >> "$LOG"
+  [ -z "$ALLOWED_STDERR" ] && exit 0
+  printf '%s\n' "$ALLOWED_STDERR" >&2
+else
+  echo strict >> "$LOG"
+  printf '%s\n' "$STRICT_STDERR" >&2
+fi
+exit 1"#,
+                var = super::INCOMPATIBLE_PUBLISH_AGE_ENV,
+            ))
+            .env_remove(super::INCOMPATIBLE_PUBLISH_AGE_ENV)
+            .env("LOG", log)
+            .env("STRICT_STDERR", strict_stderr)
+            .env("ALLOWED_STDERR", allowed_stderr.unwrap_or_default());
+        cmd
+    }
+
+    /// Runs `attempt_publish`, bounded so that any retry delay fails the test.
+    #[cfg(unix)]
+    async fn attempt_bounded(
+        package: &super::Package,
+        cmd: async_process::Command,
+        max_retries: usize,
+        caller_chose_publish_age: bool,
+    ) -> color_eyre::eyre::Result<()> {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            package.attempt_publish(cmd, max_retries, caller_chose_publish_age),
+        )
+        .await
+        .expect("a min-publish-age rejection must not wait for a retry")
+    }
+
+    /// Returns each line the stand-in recorded in `log`, in order.
+    #[cfg(unix)]
+    fn recorded(log: &Path) -> Vec<String> {
+        std::fs::read_to_string(log)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// Allows a freshly published local dependency on one more run that spends no retry.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn publishes_after_allowing_a_too_new_local_dependency() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let consumer = consumer_of_local_foo(temp.path()).await;
+        let log = temp.path().join("runs.log");
+
+        // No retry budget, so the allowed run must not count as a retry.
+        let stub = publish_stub(&log, &too_new_stderr("foo", "1.2.3"), None);
+        attempt_bounded(&consumer, stub, 0, false)
+            .await
+            .expect("publishing must succeed once the local dependency is allowed");
+
+        // The default policy runs first, and the override only follows its rejection.
+        sim_assert_eq!(recorded(&log), ["strict", "allow"]);
+    }
+
+    /// Keeps the age policy for rejections that are not this run's local releases.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fails_fast_when_the_too_new_release_is_not_local() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let consumer = consumer_of_local_foo(temp.path()).await;
+
+        // A registry crate, an older release of the local package, and a caller's own policy
+        for (case, stderr, caller_chose_publish_age) in [
+            ("registry", too_new_stderr("serde", "1.0.228"), false),
+            ("other release", too_new_stderr("foo", "1.2.2"), false),
+            ("caller policy", too_new_stderr("foo", "1.2.3"), true),
+        ] {
+            let log = temp.path().join(format!("{case}.log"));
+            // A retry budget, so falling through to the retry path would hit its delay.
+            let stub = publish_stub(&log, &stderr, None);
+            let error = attempt_bounded(&consumer, stub, 1, caller_chose_publish_age)
+                .await
+                .expect_err("a too new dependency that is not exempt must fail publishing");
+
+            // Publishing stops after the first run and names the age policy.
+            assert!(
+                error.to_string().contains("min-publish-age"),
+                "{case}: error must name the age policy: {error}"
+            );
+            sim_assert_eq!(recorded(&log), ["strict"], "{case}");
+        }
+    }
+
+    /// Recognizes a published version in styled Cargo output instead of retrying it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn styled_duplicate_error_counts_as_published() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let consumer = consumer_of_local_foo(temp.path()).await;
+        let log = temp.path().join("runs.log");
+
+        // Cargo styles its errors when the caller forwards an argument such as `--color always`.
+        let styled = "\u{1b}[1m\u{1b}[91merror\u{1b}[0m\u{1b}[1m:\u{1b}[0m crate \
+                      consumer@1.2.3 already exists on crates.io index";
+        let stub = publish_stub(&log, styled, None);
+
+        // A retry budget, so a missed match would hit the retry delay.
+        attempt_bounded(&consumer, stub, 1, false)
+            .await
+            .expect("an already published version must count as published");
+        sim_assert_eq!(recorded(&log), ["strict"]);
+    }
+
+    /// Reports a dry run that fails after the override, despite its duplicate warning.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn dry_run_failure_after_the_override_is_not_a_duplicate() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let consumer = consumer_of_local_foo(temp.path()).await;
+        let log = temp.path().join("runs.log");
+
+        // A dry run of an existing version warns about it on every run.
+        let warning = "warning: crate consumer@1.2.3 already exists on crates.io index";
+        let strict = format!("{warning}\n{}", too_new_stderr("foo", "1.2.3"));
+        let allowed = format!("{warning}\nerror: could not compile `consumer`");
+        let stub = publish_stub(&log, &strict, Some(&allowed));
+
+        let error = attempt_bounded(&consumer, stub, 0, false)
+            .await
+            .expect_err("a dry run that fails to compile must fail publishing");
+
+        // The second run's compile error is reported, not mistaken for a published version.
+        assert!(
+            error.to_string().contains("could not compile"),
+            "error must report the compile failure: {error}"
+        );
+        sim_assert_eq!(recorded(&log), ["strict", "allow"]);
     }
 
     #[test]
