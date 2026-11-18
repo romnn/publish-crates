@@ -79,7 +79,7 @@ omits it from the published manifest; other dependencies on private local packag
 ## GitHub Action
 
 ```yaml
-- uses: romnn/publish-crates@v0.0.29
+- uses: romnn/publish-crates@v0.1.0
   with:
     registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     resolve-versions: true

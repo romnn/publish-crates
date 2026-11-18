@@ -6,7 +6,9 @@ goreleaser-dist/
 # cooldown
 .cooldown.lock
 
-/target
+.DS_Store
+/target/
+/.task/
 /node_modules
 /tmp
 /act
