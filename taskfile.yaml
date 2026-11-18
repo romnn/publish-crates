@@ -47,7 +47,7 @@ tasks:
       # Make SDKROOT explicit (don't rely on image defaults)
       # Force Zig/rustc to search frameworks inside the SDK
       # Workaround for sysroot-prefixed absolute search paths
-      # Fix: c_src/mimalloc/src/options.c emits a reproducibility warning promoted to an error
+      # Keep zig from promoting the -Wdate-time reproducibility warning of C dependencies to an error
       # Github actions requires marking the bind-mounted repository as safe
       - >-
         docker run --rm -e GITHUB_TOKEN -e TAP_GITHUB_TOKEN -e "HOST_UID=$(id -u)" -e "HOST_GID=$(id
@@ -76,7 +76,7 @@ tasks:
     cmds:
       - task: goreleaser
         vars:
-          GORELEASER_ARGS: "build --snapshot --clean --timeout 120m"
+          GORELEASER_ARGS: "build --snapshot --clean"
           # The snapshot only proves that every target compiles and links.
           # LTO with one codegen unit dominates its build time, and `task release` keeps it.
           DOCKER_ENV: >-
@@ -88,7 +88,7 @@ tasks:
     desc: "release using goreleaser"
     cmds:
       - task: goreleaser
-        vars: { GORELEASER_ARGS: "release --clean --timeout 120m" }
+        vars: { GORELEASER_ARGS: "release --clean" }
 
   check:
     desc: "check cargo workspace"
@@ -141,6 +141,20 @@ tasks:
         releases. Prefer 'task upgrade' / 'task upgrade:minor'. Continue?
     cmds:
       - "cooldown upgrade --latest {{.CLI_ARGS}}"
+
+  mise:upgrade:
+    desc: "upgrade mise-managed tools and refresh the lockfile"
+    env:
+      # A fresh release is invisible for up to an hour behind mise's remote-versions cache
+      # (fetch_remote_versions_cache = "1h"); upgrading is exactly when the listing must be live.
+      MISE_FETCH_REMOTE_VERSIONS_CACHE: "0s"
+      # mise resolves `latest` for GitHub tools through its hosted version index, which trails a
+      # fresh release even with that cache off.
+      # Asking GitHub directly lets an upgrade adopt a release the moment it is published.
+      MISE_USE_VERSIONS_HOST: "0"
+    cmds:
+      - mise upgrade {{.CLI_ARGS}}
+      - mise lock
 
   unused:
     desc: "check for unused cargo workspace dependencies"

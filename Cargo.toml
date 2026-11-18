@@ -27,7 +27,6 @@ edition = "2024"
 license = "MIT"
 authors = ["romnn <contact@romnn.com>"]
 description = "Publish rust crates with support for cargo workspaces"
-homepage = "https://github.com/romnn/publish-crates"
 repository = "https://github.com/romnn/publish-crates"
 
 [profile.release]
@@ -67,11 +66,14 @@ panic = "deny"
 unreachable = "deny"
 unimplemented = "deny"
 todo = "deny"
+dbg_macro = "deny"
 indexing_slicing = "deny"
 missing_errors_doc = "warn"
 await_holding_lock = "deny"
-allow_attributes_without_reason = "deny"
+self_named_module_files = "deny" # a module with submodules lives in foo/mod.rs, never foo.rs + foo/
+allow_attributes_without_reason = "deny" # every #[allow] must carry reason = "..."
 
+# Allowed
 map_unwrap_or = "allow"
 assigning_clones = "allow"
 struct_excessive_bools = "allow"
