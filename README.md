@@ -91,7 +91,7 @@ Set `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=deny` to keep the policy for every 
 ## GitHub Action
 
 ```yaml
-- uses: romnn/publish-crates@v0.1.0
+- uses: romnn/publish-crates@v0.1.1
   with:
     registry-token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
     resolve-versions: true
